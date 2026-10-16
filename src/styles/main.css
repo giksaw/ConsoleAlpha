@@ -245,36 +245,47 @@ button {
   text-shadow: 0 1px 8px #0006;
 }
 
-/* Three-dot options button on a cover */
-.cv .dots {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 28px;
-  height: 28px;
+/* Three-dot options button — sits on the right of the title row */
+.grow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.grow b {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grow .dots {
+  flex: none;
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
   border-radius: 4px;
-  background: #000000a6;
-  color: #fff;
+  color: var(--mute);
   font-size: 17px;
   line-height: 1;
-  opacity: 0;
-  transition: opacity .12s, background .12s;
-  z-index: 2;
+  opacity: .5;
+  transition: opacity .12s, background .12s, color .12s;
 }
 
-.g:hover .dots,
-.g:focus-within .dots,
-.cv:hover .dots {
+.g:hover .grow .dots {
   opacity: 1;
 }
 
-.cv .dots:hover {
-  background: #000000de;
+.grow .dots:hover {
+  background: #ffffff14;
+  color: var(--text);
 }
 
-.g .play {
+.cv .play {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -340,9 +351,17 @@ button {
 }
 
 .tbl .th {
-  width: 30px;
-  height: 44px;
+  width: 32px;
+  height: 48px;
   border-radius: 2px;
+  display: block;
+  overflow: hidden;
+}
+
+.tbl .th img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
 
@@ -444,6 +463,7 @@ button {
 
 .acts {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   clear: none;
 }
@@ -893,5 +913,45 @@ dt {
 
   .pad .it {
     width: 22vw;
+  }
+}
+
+/* Details panel responsiveness */
+@media (max-width: 760px) {
+  /* keep the options button reachable in list mode on small screens */
+  .tbl th:last-child,
+  .tbl td:last-child {
+    display: table-cell;
+  }
+}
+
+@media (max-width: 560px) {
+  .panel {
+    padding: 20px 18px;
+  }
+
+  .panel .cv {
+    width: 132px;
+    margin: 0 14px 10px 0;
+  }
+
+  .panel h2 {
+    font-size: 22px;
+  }
+
+  dl {
+    grid-template-columns: 92px 1fr;
+  }
+
+  .acts .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 400px) {
+  .panel .cv {
+    float: none;
+    width: 140px;
+    margin: 0 0 12px;
   }
 }

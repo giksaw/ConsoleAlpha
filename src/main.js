@@ -145,21 +145,34 @@ function coverCandidates(game) {
   return [...new Set(out.filter(Boolean))];
 }
 
-function renderCover(game, extra = "") {
+function renderCover(game, extra = "", overlay = "") {
   const name = game.name || "?";
   const cands = coverCandidates(game);
   if (cands.length) {
     const [first, ...rest] = cands;
     const fb = rest.length ? ` data-fb="${esc(rest.join("|"))}"` : "";
+    // Real art: keep the cover clean — the title is shown below the card.
     return `<div class="cv ${extra}" style="background:#222">
-      <img src="${esc(first)}"${fb} alt="${esc(name)}" loading="lazy">
-      <span class="nm" style="color:#fff">${esc(name)}</span>
+      <img src="${esc(first)}"${fb} alt="${esc(name)}" loading="lazy">${overlay}
     </div>`;
   }
+  // No art available: a generated gradient tile needs its title to make sense.
   const { background, color } = getCoverGradient(name);
   return `<div class="cv ${extra}" style="background:${background};color:${color}">
-    <span class="nm">${esc(name)}</span>
+    <span class="nm">${esc(name)}</span>${overlay}
   </div>`;
+}
+
+// Small cover used in the list view (real image, gradient behind it).
+function renderThumb(game) {
+  const { background } = getCoverGradient(game.name);
+  const cands = coverCandidates(game);
+  if (cands.length) {
+    const [first, ...rest] = cands;
+    const fb = rest.length ? ` data-fb="${esc(rest.join("|"))}"` : "";
+    return `<span class="th" style="background:${background}"><img src="${esc(first)}"${fb} alt="" loading="lazy"></span>`;
+  }
+  return `<span class="th" style="background:${background}"></span>`;
 }
 
 // Walk the fallback chain when an image fails, then drop to the gradient.
@@ -476,18 +489,18 @@ function renderLibrary() {
   } else if (currentView === "grid") {
     h = `<div class="grid">` + games.map((g) => `
       <button class="g" data-id="${esc(g.id)}">
-        ${renderCover(g)}
-        <span class="dots" data-menu="${esc(g.id)}" role="button" tabindex="0" aria-label="Options for ${esc(g.name)}">&#8942;</span>
-        <span class="play" data-play="${esc(g.id)}">Play</span>
-        <b>${esc(g.name)}</b>
+        ${renderCover(g, "", `<span class="play" data-play="${esc(g.id)}">Play</span>`)}
+        <div class="grow">
+          <b>${esc(g.name)}</b>
+          <span class="dots" data-menu="${esc(g.id)}" role="button" tabindex="0" aria-label="Options for ${esc(g.name)}">&#8942;</span>
+        </div>
         <span>${esc(g.source)}, ${formatPlaytime(g.total_playtime_seconds)}${hiddenGames.has(g.id) ? " · hidden" : ""}</span>
       </button>`).join("") + `</div>`;
   } else {
     h = `<table class="tbl"><thead><tr><th></th><th>Name</th><th>Store</th><th class="r">Played</th><th>Last played</th><th class="r">Size</th><th></th><th></th></tr></thead><tbody>`
-      + games.map((g) => {
-        const { background } = getCoverGradient(g.name);
-        return `<tr data-id="${esc(g.id)}">
-          <td><span class="th" style="background:${background}"></span></td>
+      + games.map((g) => `
+        <tr data-id="${esc(g.id)}">
+          <td>${renderThumb(g)}</td>
           <td>${esc(g.name)}</td>
           <td>${esc(g.source)}</td>
           <td class="r">${formatPlaytime(g.total_playtime_seconds)}</td>
@@ -495,8 +508,7 @@ function renderLibrary() {
           <td class="r">—</td>
           <td class="r"><button class="btn" data-play="${esc(g.id)}" style="padding:5px 14px">Play</button></td>
           <td class="r"><button class="dots-inline" data-menu="${esc(g.id)}" aria-label="Options for ${esc(g.name)}">&#8942;</button></td>
-        </tr>`;
-      }).join("") + `</tbody></table>`;
+        </tr>`).join("") + `</tbody></table>`;
   }
   scrollEl.innerHTML = h;
 
