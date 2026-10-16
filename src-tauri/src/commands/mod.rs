@@ -1,4 +1,4 @@
-use crate::models::{GameEntry, StoreConfig};
+use crate::models::{CoverSuggestion, DetectedStore, GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
 use crate::services::launcher::GameLauncher;
@@ -156,4 +156,351 @@ pub fn open_game_folder(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Percent-encode a string for use inside a URL query parameter.
+fn encode_query(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            b' ' => out.push_str("%20"),
+            other => out.push_str(&format!("%{:02X}", other)),
+        }
+    }
+    out
+}
+
+/// Look up cover art for a game by name using the public Steam store search.
+///
+/// Many Epic/GOG/custom titles are also sold on Steam, so a name match gives
+/// us high-quality `library_600x900` capsule art. Only entries whose portrait
+/// art actually exists on the CDN are returned, otherwise the caller would be
+/// handed broken image URLs (DLC pages, demos and delisted apps have none).
+#[tauri::command]
+pub async fn search_steam_covers(name: String) -> Result<Vec<CoverSuggestion>, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let url = format!(
+        "https://store.steampowered.com/api/storesearch/?term={}&cc=us&l=en",
+        encode_query(trimmed)
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .user_agent("CabinetLauncher/0.1")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Steam search failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Steam search failed with status {}", response.status()));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Invalid Steam response: {}", e))?;
+
+    let mut candidates: Vec<(u64, String)> = Vec::new();
+    if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+        for item in items.iter().take(5) {
+            let id = match item.get("id").and_then(|v| v.as_u64()) {
+                Some(id) => id,
+                None => continue,
+            };
+            let title = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            candidates.push((id, title));
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Check the portrait art for each candidate in parallel.
+    let mut handles = Vec::new();
+    for (index, (id, title)) in candidates.into_iter().enumerate() {
+        let client = client.clone();
+        handles.push(tauri::async_runtime::spawn(async move {
+            let cover = format!(
+                "https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_600x900.jpg",
+                id
+            );
+            let has_art = match client.head(&cover).send().await {
+                Ok(resp) => resp.status().is_success(),
+                Err(_) => false,
+            };
+            (index, id, title, cover, has_art)
+        }));
+    }
+
+    let mut found: Vec<(usize, CoverSuggestion)> = Vec::new();
+    for handle in handles {
+        if let Ok((index, id, title, cover, true)) = handle.await {
+            found.push((index, CoverSuggestion { id, name: title, cover }));
+        }
+    }
+    found.sort_by_key(|(index, _)| *index);
+
+    Ok(found.into_iter().map(|(_, suggestion)| suggestion).collect())
+}
+
+/// Total size of every file under `path`, in bytes.
+///
+/// The walk can take a while on large games, so it runs on the blocking pool
+/// rather than the UI thread.
+#[tauri::command]
+pub async fn get_game_size(path: String) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || compute_dir_size(&path))
+        .await
+        .map_err(|e| format!("Size lookup failed: {}", e))?
+}
+
+fn compute_dir_size(path: &str) -> Result<u64, String> {
+    let root = std::path::Path::new(path);
+    if !root.exists() {
+        return Err("Install folder not found".to_string());
+    }
+    if root.is_file() {
+        return std::fs::metadata(root)
+            .map(|m| m.len())
+            .map_err(|e| e.to_string());
+    }
+
+    let mut total: u64 = 0;
+    for entry in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn dir_exists(path: &str) -> bool {
+    !path.is_empty() && std::path::Path::new(path).exists()
+}
+
+fn reg_string(root: winreg::HKEY, subkey: &str, value: &str) -> Option<String> {
+    use winreg::RegKey;
+    let key = RegKey::predef(root).open_subkey(subkey).ok()?;
+    key.get_value::<String, _>(value).ok()
+}
+
+fn reg_key_exists(root: winreg::HKEY, subkey: &str) -> bool {
+    use winreg::RegKey;
+    RegKey::predef(root).open_subkey(subkey).is_ok()
+}
+
+/// Detect which common game launchers are installed on this machine.
+#[tauri::command]
+pub fn detect_stores() -> Vec<DetectedStore> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    let program_data =
+        std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".to_string());
+    let appdata = std::env::var("APPDATA").unwrap_or_default();
+    let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let pf = "C:\\Program Files";
+    let pf86 = "C:\\Program Files (x86)";
+
+    let mut stores = Vec::new();
+
+    // Steam
+    let steam = reg_string(HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath")
+        .map(|p| p.replace('/', "\\"))
+        .filter(|p| dir_exists(p))
+        .or_else(|| {
+            let p = format!("{}\\Steam", pf86);
+            if dir_exists(&p) {
+                Some(p)
+            } else {
+                None
+            }
+        });
+    stores.push(DetectedStore {
+        id: "steam".into(),
+        name: "Steam".into(),
+        installed: steam.is_some(),
+        path: steam,
+    });
+
+    // Epic Games
+    let epic = format!(
+        "{}\\Epic\\EpicGamesLauncher\\Data\\Manifests",
+        program_data
+    );
+    stores.push(DetectedStore {
+        id: "epic".into(),
+        name: "Epic Games".into(),
+        installed: dir_exists(&epic),
+        path: if dir_exists(&epic) { Some(epic) } else { None },
+    });
+
+    // GOG Galaxy
+    let gog = reg_string(
+        HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\WOW6432Node\\GOG.com\\GalaxyClient",
+        "path",
+    )
+    .filter(|p| dir_exists(p))
+    .or_else(|| {
+        let p = format!("{}\\GOG Galaxy", pf86);
+        if dir_exists(&p) {
+            Some(p)
+        } else {
+            None
+        }
+    });
+    stores.push(DetectedStore {
+        id: "gog".into(),
+        name: "GOG Galaxy".into(),
+        installed: gog.is_some(),
+        path: gog,
+    });
+
+    // Battle.net
+    let battlenet = {
+        let p = format!("{}\\Battle.net", pf86);
+        if dir_exists(&p) {
+            Some(p)
+        } else if reg_key_exists(HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Blizzard Entertainment") {
+            Some(format!("{}\\Battle.net", pf86))
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "battlenet".into(),
+        name: "Battle.net".into(),
+        installed: battlenet.is_some(),
+        path: battlenet,
+    });
+
+    // Ubisoft Connect
+    let ubisoft = {
+        let p = format!("{}\\Ubisoft\\Ubisoft Game Launcher", pf86);
+        if dir_exists(&p) {
+            Some(p)
+        } else if reg_key_exists(HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Ubisoft") {
+            Some(p)
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "ubisoft".into(),
+        name: "Ubisoft Connect".into(),
+        installed: ubisoft.is_some(),
+        path: ubisoft,
+    });
+
+    // EA App / Origin
+    let ea = {
+        let modern = format!("{}\\Electronic Arts\\EA Desktop", pf);
+        let legacy = format!("{}\\Origin", pf86);
+        if dir_exists(&modern) {
+            Some(modern)
+        } else if dir_exists(&legacy) {
+            Some(legacy)
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "ea".into(),
+        name: "EA App".into(),
+        installed: ea.is_some(),
+        path: ea,
+    });
+
+    // Xbox / Microsoft Store
+    let xbox = {
+        let pkg = format!(
+            "{}\\Packages\\Microsoft.GamingApp_8wekyb3d8bbwe",
+            local_appdata
+        );
+        let store_pkg = format!(
+            "{}\\Packages\\Microsoft.WindowsStore_8wekyb3d8bbwe",
+            local_appdata
+        );
+        if dir_exists(&pkg) {
+            Some(pkg)
+        } else if dir_exists(&store_pkg) {
+            Some(store_pkg)
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "xbox".into(),
+        name: "Xbox".into(),
+        installed: xbox.is_some(),
+        path: xbox,
+    });
+
+    // Amazon Games
+    let amazon = {
+        let p = format!("{}\\Amazon Games", pf);
+        if dir_exists(&p) {
+            Some(p)
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "amazon".into(),
+        name: "Amazon Games".into(),
+        installed: amazon.is_some(),
+        path: amazon,
+    });
+
+    // itch.io
+    let itch = {
+        let p = format!("{}\\itch", appdata);
+        if dir_exists(&p) {
+            Some(p)
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "itch".into(),
+        name: "itch.io".into(),
+        installed: itch.is_some(),
+        path: itch,
+    });
+
+    // Rockstar Games Launcher
+    let rockstar = {
+        let p = format!("{}\\Rockstar Games", pf);
+        if dir_exists(&p) {
+            Some(p)
+        } else {
+            None
+        }
+    };
+    stores.push(DetectedStore {
+        id: "rockstar".into(),
+        name: "Rockstar Games".into(),
+        installed: rockstar.is_some(),
+        path: rockstar,
+    });
+
+    stores
 }

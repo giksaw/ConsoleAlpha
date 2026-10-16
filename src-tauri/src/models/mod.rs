@@ -3,6 +3,23 @@ pub use store_config::StoreConfig;
 
 use serde::{Deserialize, Serialize};
 
+/// A candidate cover image returned by a Steam store search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverSuggestion {
+    pub id: u64,
+    pub name: String,
+    pub cover: String,
+}
+
+/// A store/launcher the app knows how to look for on this machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectedStore {
+    pub id: String,
+    pub name: String,
+    pub path: Option<String>,
+    pub installed: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameEntry {
     pub id: String,

@@ -22,6 +22,7 @@ walkdir = "2"
 chrono = "0.4"
 dirs = "5"
 sysinfo = "0.31"
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

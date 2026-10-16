@@ -30,6 +30,9 @@ pub fn run() {
             commands::set_store_config,
             commands::open_url,
             commands::open_game_folder,
+            commands::search_steam_covers,
+            commands::get_game_size,
+            commands::detect_stores,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
