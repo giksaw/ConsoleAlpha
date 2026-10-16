@@ -126,9 +126,20 @@ function formatPlaytime(seconds) {
   return h <= 0 ? "<1 h" : `${h} h`;
 }
 
-function getDisplayGames() {
-  let games = [...allGames, ...customGames];
-  if (settings.hide_removed) games = games.filter((g) => g.is_installed !== false);
+// Every game we know about, regardless of visibility settings.
+function baseGames() {
+  return [...allGames, ...customGames];
+}
+
+// Games shown for a given filter. "All games" and the dedicated "Uninstalled"
+// view always show everything, so a title can never vanish from the library
+// entirely — the hide-removed setting only trims the scoped views.
+function getDisplayGames(filter = currentFilter) {
+  let games = baseGames();
+  const alwaysShow = filter === "all" || filter === "uninstalled";
+  if (settings.hide_removed && !alwaysShow) {
+    games = games.filter((g) => g.is_installed !== false);
+  }
   return games;
 }
 
@@ -142,6 +153,7 @@ function matchGame(game, filter) {
     return days <= 7;
   }
   if (filter === "local") return game.source === "Custom";
+  if (filter === "uninstalled") return game.is_installed === false;
   return game.source === filter;
 }
 
@@ -299,8 +311,7 @@ async function toggleFavorite(gameId) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 function renderRail() {
-  const games = getDisplayGames();
-  const cnt = (f) => games.filter((g) => matchGame(g, f)).length;
+  const cnt = (f) => getDisplayGames(f).filter((g) => matchGame(g, f)).length;
   let html = `<h4>Library</h4>`;
   for (const [k, l] of NAV) {
     html += `<button class="ri ${currentPage === "lib" && currentFilter === k ? "on" : ""}" data-f="${k}">${l}<em>${cnt(k)}</em></button>`;
@@ -314,6 +325,7 @@ function renderRail() {
   }
   html += `<h4>Collections</h4>`;
   html += `<button class="ri ${currentPage === "lib" && currentFilter === "local" ? "on" : ""}" data-f="local">Local Games<em>${cnt("local")}</em></button>`;
+  html += `<button class="ri ${currentPage === "lib" && currentFilter === "uninstalled" ? "on" : ""}" data-f="uninstalled">Uninstalled<em>${cnt("uninstalled")}</em></button>`;
   html += `<h4>App</h4>`;
   html += `<button class="ri ${currentPage === "set" ? "on" : ""}" data-pg="set">Sources &amp; settings</button>`;
   html += `<button class="ri" data-pad>Controller mode</button>`;
@@ -325,7 +337,7 @@ function renderTop() {
     topEl.innerHTML = `<h1>Sources &amp; settings</h1>`;
     return;
   }
-  const titles = { all: "All games", recent: "Recently played", fav: "Favorites", local: "Local Games" };
+  const titles = { all: "All games", recent: "Recently played", fav: "Favorites", local: "Local Games", uninstalled: "Uninstalled" };
   const t = titles[currentFilter] || currentFilter;
   const games = getFilteredGames();
   topEl.innerHTML = `<h1>${t}</h1><span class="n">${games.length}</span>
@@ -391,7 +403,7 @@ function renderLibrary() {
 
 function renderSettings() {
   renderTop();
-  const games = getDisplayGames();
+  const games = baseGames();
   const enabledStores = storeConfig.stores;
 
   const srcRow = (name, key, desc, count) => {
@@ -431,7 +443,7 @@ function renderSettings() {
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("track_playtime", "Track play time", "Notice when a game is running and count the session.", settings.track_playtime)}
     ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Cabinet.", settings.keep_in_tray)}
-    ${tg("hide_removed", "Hide games I've removed", "Keep uninstalled titles out of the library.", settings.hide_removed)}
+    ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
   </div>`;
 
   const rb = $("#rescan");
@@ -547,7 +559,7 @@ function addGameFromDialog() {
 
 // ── Controller mode ──────────────────────────────────────────────────────────
 function openPad() {
-  const games = getDisplayGames();
+  const games = baseGames();
   if (!games.length) { toast("No games to display"); return; }
   controllerIndex = 0;
   padEl.classList.add("on");
@@ -559,7 +571,7 @@ function closePad() {
 }
 
 function renderPad() {
-  const games = getDisplayGames();
+  const games = baseGames();
   if (!games.length) { closePad(); return; }
   const g = games[controllerIndex];
   $("#prow").innerHTML = games.map((game, i) =>
@@ -588,7 +600,7 @@ function setupEventListeners() {
     if (playBtn) {
       e.stopPropagation();
       const id = playBtn.dataset.play;
-      const game = getDisplayGames().find((g) => g.id === id);
+      const game = baseGames().find((g) => g.id === id);
       if (game) launchGame(game);
       return;
     }
@@ -610,7 +622,7 @@ function setupEventListeners() {
     // Game card / row click
     const card = e.target.closest("[data-id]");
     if (card) {
-      const game = getDisplayGames().find((g) => g.id === card.dataset.id);
+      const game = baseGames().find((g) => g.id === card.dataset.id);
       if (game) openPanel(game);
       return;
     }
@@ -668,7 +680,7 @@ function setupEventListeners() {
   // Keyboard
   document.addEventListener("keydown", (e) => {
     if (padEl.classList.contains("on")) {
-      const games = getDisplayGames();
+      const games = baseGames();
       if (e.key === "ArrowRight") { controllerIndex = Math.min(games.length - 1, controllerIndex + 1); renderPad(); }
       else if (e.key === "ArrowLeft") { controllerIndex = Math.max(0, controllerIndex - 1); renderPad(); }
       else if (e.key === "Enter" || e.key.toLowerCase() === "a") {
