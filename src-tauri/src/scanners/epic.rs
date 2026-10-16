@@ -51,6 +51,13 @@ fn parse_manifest(path: &Path) -> Option<GameEntry> {
     let install_path = PathBuf::from(&install_location);
     let executable_path = install_path.join(&launch_exe);
 
+    // Some Epic titles ship a cover thumbnail in the manifest; use it when present.
+    let cover_image_path = manifest
+        .get("VaultThumbnailUrl")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+
     Some(GameEntry {
         id: format!("epic_{}", app_name),
         name: display_name,
@@ -58,7 +65,7 @@ fn parse_manifest(path: &Path) -> Option<GameEntry> {
         install_path: install_location,
         executable_path: executable_path.to_string_lossy().to_string(),
         launch_command: executable_path.to_string_lossy().to_string(),
-        cover_image_path: None,
+        cover_image_path,
         source: GameSource::Epic,
         last_played: None,
         total_playtime_seconds: 0,

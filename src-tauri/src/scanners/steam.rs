@@ -98,9 +98,12 @@ fn parse_app_manifest(path: &Path) -> Option<GameEntry> {
     let game_path = steamapps_dir.join("common").join(&install_dir);
     let executable = find_game_executable(&game_path, &name);
 
-    // Construct Steam library cover image URL
+    // Portrait "library capsule" art (600x900) matches the 2:3 grid and is far
+    // sharper than the old 460x215 header image. The frontend carries a
+    // fallback chain (library -> capsule -> header -> gradient) if a title has
+    // no library art, so no network check is needed here.
     let cover_image_path = format!(
-        "https://steamcdn-a.akamaihd.net/steam/apps/{}/header.jpg",
+        "https://cdn.cloudflare.steamstatic.com/steam/apps/{}/library_600x900.jpg",
         app_id
     );
 
