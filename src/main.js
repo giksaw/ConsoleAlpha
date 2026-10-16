@@ -18,6 +18,9 @@ let settings = {
   keep_in_tray: false,
   hide_removed: false,
 };
+let storeConfig = {
+  stores: { steam: true, epic: true, gog: true },
+};
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -34,6 +37,19 @@ const isTauri = typeof window !== "undefined" && (
   window.__TAURI_INTERNALS__ !== undefined ||
   (window.__TAURI_METADATA__ !== undefined)
 );
+
+// ── Store metadata ───────────────────────────────────────────────────────────
+const STORE_META = {
+  Steam: { color: "#1b78b8", icon: "S" },
+  Epic: { color: "#2a2a2a", icon: "E" },
+  GOG: { color: "#a8541b", icon: "G" },
+  Xbox: { color: "#107c10", icon: "X" },
+  BattleNet: { color: "#00aeff", icon: "B" },
+  Custom: { color: "#7a2f5e", icon: "+" },
+};
+
+const NAV = [["all", "All games"], ["recent", "Recently played"], ["fav", "Favorites"]];
+const STORE_NAMES = ["Steam", "Epic", "GOG"];
 
 // ── Cover generation ─────────────────────────────────────────────────────────
 const COVER_COLORS = [
@@ -125,6 +141,7 @@ function matchGame(game, filter) {
     const days = (Date.now() - d.getTime()) / 86400000;
     return days <= 7;
   }
+  if (filter === "local") return game.source === "Custom";
   return game.source === filter;
 }
 
@@ -196,6 +213,33 @@ async function loadCachedGames() {
   } catch { /* ignore */ }
 }
 
+async function loadStoreConfig() {
+  if (!isTauri) {
+    // Browser mode: load from localStorage
+    try {
+      const raw = localStorage.getItem("cabinet_store_config");
+      if (raw) storeConfig = JSON.parse(raw);
+    } catch { /* ignore */ }
+    return;
+  }
+  try {
+    const config = await invoke("get_store_config");
+    if (config && config.stores) storeConfig = config;
+  } catch { /* ignore */ }
+}
+
+async function saveStoreConfig() {
+  if (!isTauri) {
+    localStorage.setItem("cabinet_store_config", JSON.stringify(storeConfig));
+    return;
+  }
+  try {
+    await invoke("set_store_config", { config: storeConfig });
+  } catch (e) {
+    console.error("Failed to save store config:", e);
+  }
+}
+
 async function scanGames() {
   if (!isTauri) {
     toast("Tauri not available — running in browser mode");
@@ -254,9 +298,6 @@ async function toggleFavorite(gameId) {
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
-const NAV = [["all", "All games"], ["recent", "Recently played"], ["fav", "Favorites"]];
-const STORES = ["Steam", "Epic", "GOG", "Custom"];
-
 function renderRail() {
   const games = getDisplayGames();
   const cnt = (f) => games.filter((g) => matchGame(g, f)).length;
@@ -265,9 +306,14 @@ function renderRail() {
     html += `<button class="ri ${currentPage === "lib" && currentFilter === k ? "on" : ""}" data-f="${k}">${l}<em>${cnt(k)}</em></button>`;
   }
   html += `<h4>Stores</h4>`;
-  for (const s of STORES) {
-    html += `<button class="ri ${currentPage === "lib" && currentFilter === s ? "on" : ""}" data-f="${s}">${s}<em>${cnt(s)}</em></button>`;
+  for (const s of STORE_NAMES) {
+    const enabled = storeConfig.stores[s.toLowerCase()] !== false;
+    if (enabled) {
+      html += `<button class="ri ${currentPage === "lib" && currentFilter === s ? "on" : ""}" data-f="${s}">${s}<em>${cnt(s)}</em></button>`;
+    }
   }
+  html += `<h4>Collections</h4>`;
+  html += `<button class="ri ${currentPage === "lib" && currentFilter === "local" ? "on" : ""}" data-f="local">Local Games<em>${cnt("local")}</em></button>`;
   html += `<h4>App</h4>`;
   html += `<button class="ri ${currentPage === "set" ? "on" : ""}" data-pg="set">Sources &amp; settings</button>`;
   html += `<button class="ri" data-pad>Controller mode</button>`;
@@ -279,7 +325,7 @@ function renderTop() {
     topEl.innerHTML = `<h1>Sources &amp; settings</h1>`;
     return;
   }
-  const titles = { all: "All games", recent: "Recently played", fav: "Favorites" };
+  const titles = { all: "All games", recent: "Recently played", fav: "Favorites", local: "Local Games" };
   const t = titles[currentFilter] || currentFilter;
   const games = getFilteredGames();
   topEl.innerHTML = `<h1>${t}</h1><span class="n">${games.length}</span>
@@ -346,19 +392,41 @@ function renderLibrary() {
 function renderSettings() {
   renderTop();
   const games = getDisplayGames();
-  const src = (n, d, count, on) => `<div class="src"><div><b><i class="dot ${on ? "" : "off"}"></i>${n}</b></div>${on ? `<span>${count} games</span>` : `<button class="btn o">Add</button>`}<span style="grid-column:1/-1">${d}</span></div>`;
+  const enabledStores = storeConfig.stores;
+
+  const srcRow = (name, key, desc, count) => {
+    const on = enabledStores[key] !== false;
+    return `<div class="src"><div><b><i class="dot ${on ? "" : "off"}"></i>${name}</b></div>
+      <button class="tg ${on ? "on" : ""}" data-store="${key}" aria-pressed="${on}" aria-label="Toggle ${name}"></button>
+      <span style="grid-column:1/-1">${desc}</span>
+      <span style="grid-column:1/-1;color:var(--mute);font-size:12px">${on ? `${count} games found` : "Disabled — won't be scanned"}</span>
+    </div>`;
+  };
+
+  const hiddenStores = Object.entries(enabledStores)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+
+  const hiddenSection = hiddenStores.length > 0
+    ? `<h2>Hidden stores</h2>` +
+      hiddenStores.map((k) => {
+        const name = STORE_NAMES.find(s => s.toLowerCase() === k) || k;
+        return `<div class="src"><div><b>${name}</b></div>
+          <button class="btn o" data-restore="${k}">Add back</button>
+          <span style="grid-column:1/-1">This store is hidden. Click "Add back" to re-enable scanning.</span>
+        </div>`;
+      }).join("")
+    : "";
+
   const tg = (n, d, v) => `<div class="src"><div><b>${n}</b></div><button class="tg" aria-pressed="${v}" aria-label="${n}"></button><span style="grid-column:1/-1">${d}</span></div>`;
 
   scrollEl.innerHTML = `<div class="sec">
     <h2>Detected stores</h2>
     <div style="display:flex;align-items:center;justify-content:space-between"><span style="color:var(--mute)">Last scan: ${games.length} games total</span><button class="btn" id="rescan">Rescan now</button></div>
-    ${src("Steam", "C:\\Program Files (x86)\\Steam", games.filter(g => g.source === "Steam").length, games.some(g => g.source === "Steam"))}
-    ${src("Epic Games", "C:\\Program Files\\Epic Games", games.filter(g => g.source === "Epic").length, games.some(g => g.source === "Epic"))}
-    ${src("GOG Galaxy", "C:\\GOG Games", games.filter(g => g.source === "GOG").length, games.some(g => g.source === "GOG"))}
-    <h2>Other launchers</h2>
-    ${src("Battle.net", "Not found. Point Cabinet at the install folder.", 0, false)}
-    ${src("Xbox, EA App, Ubisoft Connect", "Not found.", 0, false)}
-    ${src("Heroic and Lutris", "Not found.", 0, false)}
+    ${srcRow("Steam", "steam", "C:\\Program Files (x86)\\Steam", games.filter(g => g.source === "Steam").length)}
+    ${srcRow("Epic Games", "epic", "C:\\Program Files\\Epic Games", games.filter(g => g.source === "Epic").length)}
+    ${srcRow("GOG Galaxy", "gog", "C:\\GOG Games", games.filter(g => g.source === "GOG").length)}
+    ${hiddenSection}
     <h2>Behavior</h2>
     ${tg("Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("Track play time", "Notice when a game is running and count the session.", settings.track_playtime)}
@@ -368,6 +436,31 @@ function renderSettings() {
 
   const rb = $("#rescan");
   if (rb) rb.onclick = () => scanGames();
+
+  // Store toggle handlers
+  document.querySelectorAll("[data-store]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.store;
+      const current = storeConfig.stores[key] !== false;
+      storeConfig.stores[key] = !current;
+      saveStoreConfig();
+      renderSettings();
+      renderRail();
+      toast(current ? `${key} disabled` : `${key} enabled`);
+    });
+  });
+
+  // Restore store handlers
+  document.querySelectorAll("[data-restore]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const key = el.dataset.restore;
+      storeConfig.stores[key] = true;
+      saveStoreConfig();
+      renderSettings();
+      renderRail();
+      toast(`${key} re-enabled`);
+    });
+  });
 }
 
 function renderAll() {
@@ -607,6 +700,7 @@ async function init() {
   setupEventListeners();
   await loadFavorites();
   await loadCachedGames();
+  await loadStoreConfig();
   renderAll();
   if (isTauri) await scanGames();
 }

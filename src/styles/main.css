@@ -569,6 +569,36 @@ dt {
   background: var(--on);
 }
 
+/* Store toggle in settings */
+.tg.on {
+  background: var(--hi);
+  border-color: var(--hi);
+}
+
+.tg.on::after {
+  left: 19px;
+  background: var(--on);
+}
+
+/* Hidden stores section */
+.src .btn.o {
+  padding: 5px 14px;
+  font-size: 12.5px;
+}
+
+/* Local games badge */
+.ri .local-badge {
+  display: inline-block;
+  background: #7a2f5e;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 /* Controller mode */
 .pad {
   position: fixed;
