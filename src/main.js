@@ -418,7 +418,7 @@ function renderSettings() {
       }).join("")
     : "";
 
-  const tg = (n, d, v) => `<div class="src"><div><b>${n}</b></div><button class="tg" aria-pressed="${v}" aria-label="${n}"></button><span style="grid-column:1/-1">${d}</span></div>`;
+  const tg = (key, n, d, v) => `<div class="src"><div><b>${n}</b></div><button class="tg" data-setting="${key}" aria-pressed="${v}" aria-label="${n}"></button><span style="grid-column:1/-1">${d}</span></div>`;
 
   scrollEl.innerHTML = `<div class="sec">
     <h2>Detected stores</h2>
@@ -428,10 +428,10 @@ function renderSettings() {
     ${srcRow("GOG Galaxy", "gog", "C:\\GOG Games", games.filter(g => g.source === "GOG").length)}
     ${hiddenSection}
     <h2>Behavior</h2>
-    ${tg("Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
-    ${tg("Track play time", "Notice when a game is running and count the session.", settings.track_playtime)}
-    ${tg("Keep running in the tray", "Closing the window doesn't quit Cabinet.", settings.keep_in_tray)}
-    ${tg("Hide games I've removed", "Keep uninstalled titles out of the library.", settings.hide_removed)}
+    ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
+    ${tg("track_playtime", "Track play time", "Notice when a game is running and count the session.", settings.track_playtime)}
+    ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Cabinet.", settings.keep_in_tray)}
+    ${tg("hide_removed", "Hide games I've removed", "Keep uninstalled titles out of the library.", settings.hide_removed)}
   </div>`;
 
   const rb = $("#rescan");
@@ -643,20 +643,15 @@ function setupEventListeners() {
       return;
     }
 
-    // Settings toggles
+    // Behavior setting toggles (store toggles have their own listener)
     const tg = e.target.closest(".tg");
     if (tg) {
-      const pressed = tg.getAttribute("aria-pressed") === "true";
-      tg.setAttribute("aria-pressed", String(!pressed));
-      // Find which setting this is by index
-      const toggles = document.querySelectorAll(".tg");
-      const idx = [...toggles].indexOf(tg);
-      const keys = ["scan_on_startup", "track_playtime", "keep_in_tray", "hide_removed"];
-      if (idx >= 0 && idx < keys.length) {
-        settings[keys[idx]] = !pressed;
-        saveSettings();
-        renderAll();
-      }
+      if (tg.dataset.store) return; // handled by the store toggle listener
+      const key = tg.dataset.setting;
+      if (!key) return;
+      settings[key] = !(tg.getAttribute("aria-pressed") === "true");
+      saveSettings();
+      renderAll();
       return;
     }
   });
