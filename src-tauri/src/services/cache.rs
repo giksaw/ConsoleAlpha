@@ -1,0 +1,46 @@
+use crate::models::GameEntry;
+use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
+
+pub struct CacheService {
+    cache_path: PathBuf,
+    favorites_path: PathBuf,
+}
+
+impl CacheService {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        let cache_path = cache_dir.join("game_cache.json");
+        let favorites_path = cache_dir.join("favorites.json");
+        CacheService {
+            cache_path,
+            favorites_path,
+        }
+    }
+
+    pub fn load(&self) -> Option<Vec<GameEntry>> {
+        let content = fs::read_to_string(&self.cache_path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    pub fn save(&self, games: &[GameEntry]) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(games)
+            .map_err(|e| format!("Failed to serialize cache: {}", e))?;
+        fs::write(&self.cache_path, json)
+            .map_err(|e| format!("Failed to write cache: {}", e))?;
+        Ok(())
+    }
+
+    pub fn load_favorites(&self) -> HashSet<String> {
+        let content = fs::read_to_string(&self.favorites_path).unwrap_or_default();
+        serde_json::from_str(&content).unwrap_or_default()
+    }
+
+    pub fn save_favorites(&self, favorites: &HashSet<String>) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(favorites)
+            .map_err(|e| format!("Failed to serialize favorites: {}", e))?;
+        fs::write(&self.favorites_path, json)
+            .map_err(|e| format!("Failed to write favorites: {}", e))?;
+        Ok(())
+    }
+}

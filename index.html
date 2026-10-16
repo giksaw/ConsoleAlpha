@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cabinet: Game Launcher</title>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles/main.css" />
+</head>
+<body>
+  <div class="win">
+    <div class="body">
+      <aside class="rail" id="rail"></aside>
+      <div class="main">
+        <div class="top" id="top"></div>
+        <div class="scroll" id="sc"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="panel" id="panel" aria-label="Game details"></aside>
+
+  <div class="dlg" id="dlg" role="dialog" aria-label="Add a game">
+    <h3>Add a game</h3><span style="color:var(--mute)">For games that aren't in a store library.</span>
+    <label class="fld">Executable<div class="in"><input id="dlg-exe" placeholder="D:\Games\Hollow\hollow.exe"><button class="btn o" id="dlg-browse">Browse</button></div></label>
+    <label class="fld">Name<div class="in"><input id="dlg-name" placeholder="Hollow"></div></label>
+    <label class="fld">Launch arguments<div class="in"><input id="dlg-args" placeholder="-windowed -nointro"></div></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:24px"><button class="btn o" id="dx">Cancel</button><button class="btn" id="dok">Add game</button></div>
+    <input type="file" id="dlg-file" style="display:none">
+  </div>
+
+  <div class="pad" id="pad">
+    <div class="hd"><span>Cabinet</span><span id="pc"></span></div>
+    <div class="row" id="prow"></div>
+    <div class="info"><div id="pinfo"></div><div class="keys"><span><b>A</b>Play</span><span><b>B</b>Back</span><span><b>Y</b>Favorite</span></div></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
