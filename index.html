@@ -21,6 +21,21 @@
   <div class="scrim" id="scrim"></div>
   <aside class="panel" id="panel" aria-label="Game details"></aside>
 
+  <div class="menu" id="menu" role="menu" aria-label="Game options"></div>
+
+  <div class="dlg" id="covdlg" role="dialog" aria-label="Set cover art">
+    <h3>Cover art</h3><span style="color:var(--mute)">Use a local image file or paste an image URL.</span>
+    <div class="covprev" id="cov-prev"></div>
+    <label class="fld">Image URL<div class="in"><input id="cov-url" placeholder="https://example.com/cover.jpg"></div></label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
+      <button class="btn o" id="cov-file">Choose file…</button>
+      <button class="btn o" id="cov-search">Search the web</button>
+      <button class="btn o" id="cov-reset">Reset to default</button>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:24px"><button class="btn o" id="cov-x">Cancel</button><button class="btn" id="cov-save">Save cover</button></div>
+    <input type="file" id="cov-input" accept="image/*" style="display:none">
+  </div>
+
   <div class="dlg" id="dlg" role="dialog" aria-label="Add a game">
     <h3>Add a game</h3><span style="color:var(--mute)">For games that aren't in a store library.</span>
     <label class="fld">Executable<div class="in"><input id="dlg-exe" placeholder="D:\Games\Hollow\hollow.exe"><button class="btn o" id="dlg-browse">Browse</button></div></label>
