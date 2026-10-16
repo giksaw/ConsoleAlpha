@@ -90,8 +90,12 @@ fn parse_app_manifest(path: &Path) -> Option<GameEntry> {
     let name = extract_vdf_value(&content, "name")?;
     let install_dir = extract_vdf_value(&content, "installdir")?;
 
-    let library_root = path.parent()?.parent()?;
-    let game_path = library_root.join("common").join(&install_dir);
+    // The manifest lives in <library>\steamapps, and games live in
+    // <library>\steamapps\common\<installdir>. The "steamapps" component is
+    // essential — omitting it makes every path (and is_installed) wrong, which
+    // hides all Steam games when "Hide games I've removed" is enabled.
+    let steamapps_dir = path.parent()?;
+    let game_path = steamapps_dir.join("common").join(&install_dir);
     let executable = find_game_executable(&game_path, &name);
 
     // Construct Steam library cover image URL
