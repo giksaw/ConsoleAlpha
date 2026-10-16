@@ -18,18 +18,27 @@ let coverGame = null;  // game whose cover dialog is open
 let coverPending = { value: null }; // staged cover (data URL) from a picked file
 let settings = {
   scan_on_startup: true,
-  track_playtime: true,
   keep_in_tray: false,
   hide_removed: false,
+  show_stores_in_sidebar: true,
 };
 let storeConfig = {
   stores: { steam: true, epic: true, gog: true },
 };
+let detectedStores = []; // [{ id, name, path, installed }] from the backend
 
 // Custom cover art, keyed by game id (persisted in IndexedDB, cached in memory
 // so rendering stays synchronous).
 const coverOverrides = new Map();
 let coverDB = null;
+
+// Cover art resolved by name through the Steam store search, keyed by game id.
+// Persisted so we only pay for the lookup once per game.
+const coverLookup = new Map();   // id → cover URL ("" means "looked up, no match")
+const lookupFailed = new Set();  // ids whose lookup errored this session
+
+// On-disk sizes, keyed by game id. Computed lazily for games the user can see.
+const sizes = new Map();         // id → bytes | null | "pending"
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -50,17 +59,22 @@ const isTauri = typeof window !== "undefined" && (
 );
 
 // ── Store metadata ───────────────────────────────────────────────────────────
-const STORE_META = {
-  Steam: { color: "#1b78b8" },
-  Epic: { color: "#2a2a2a" },
-  GOG: { color: "#a8541b" },
-  Xbox: { color: "#107c10" },
-  BattleNet: { color: "#00aeff" },
-  Custom: { color: "#7a2f5e" },
-};
-
 const NAV = [["all", "All games"], ["recent", "Recently played"], ["fav", "Favorites"]];
-const STORE_NAMES = ["Steam", "Epic", "GOG"];
+
+// The launchers we look for on this machine. `source` is the value the scanners
+// put on a game; `supported` is true only for launchers we can actually scan.
+const STORE_CATALOG = [
+  { id: "steam", name: "Steam", source: "Steam", supported: true },
+  { id: "epic", name: "Epic Games", source: "Epic", supported: true },
+  { id: "gog", name: "GOG Galaxy", source: "GOG", supported: true },
+  { id: "battlenet", name: "Battle.net", source: "BattleNet", supported: false },
+  { id: "ubisoft", name: "Ubisoft Connect", source: "Ubisoft", supported: false },
+  { id: "ea", name: "EA App", source: "EA", supported: false },
+  { id: "xbox", name: "Xbox", source: "Xbox", supported: false },
+  { id: "amazon", name: "Amazon Games", source: "Amazon", supported: false },
+  { id: "itch", name: "itch.io", source: "itch.io", supported: false },
+  { id: "rockstar", name: "Rockstar Games", source: "Rockstar", supported: false },
+];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function esc(s) {
@@ -83,9 +97,14 @@ function relativeTime(dateStr) {
   const y = Math.floor(days / 365); return `${y} year${y > 1 ? "s" : ""} ago`;
 }
 
-function formatPlaytime(seconds) {
-  const h = Math.floor((seconds || 0) / 3600);
-  return h <= 0 ? "<1 h" : `${h} h`;
+function formatSize(bytes) {
+  if (bytes === "pending") return "…";
+  if (bytes === null || bytes === undefined) return "—";
+  const gb = bytes / 1073741824;
+  if (gb >= 1) return (gb >= 10 ? Math.round(gb) : gb.toFixed(1)) + " GB";
+  const mb = bytes / 1048576;
+  if (mb >= 1) return Math.round(mb) + " MB";
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
 }
 
 // ── Cover generation ─────────────────────────────────────────────────────────
@@ -127,12 +146,14 @@ function getCoverGradient(name) {
   return { background: bgs[p], color: ink };
 }
 
-// Ordered list of cover URLs to try for a game: custom override first, then the
-// store cover and (for Steam) progressively smaller fallbacks.
+// Ordered list of cover URLs to try for a game: custom override first, then a
+// Steam lookup by name, then the store cover and (for Steam) smaller fallbacks.
 function coverCandidates(game) {
   const out = [];
   const override = coverOverrides.get(game.id);
   if (override) out.push(override);
+  const looked = coverLookup.get(game.id);
+  if (looked) out.push(looked);
   if (game.cover_image_path) out.push(game.cover_image_path);
 
   const m = /^steam_(\d+)$/.exec(game.id || "");
@@ -188,6 +209,163 @@ document.addEventListener("error", (e) => {
   }
 }, true);
 
+// ── Cover lookup (Steam store search by name) ────────────────────────────────
+// Many Epic/GOG/custom titles are also sold on Steam, and Steam's 600×900
+// library art is far better than what those stores expose. We look the name up
+// once, cache the result, and quietly fill the grid in as answers arrive.
+function loadCoverLookup() {
+  try {
+    const raw = localStorage.getItem("cabinet_cover_lookup");
+    if (raw) for (const [k, v] of Object.entries(JSON.parse(raw))) coverLookup.set(k, v);
+  } catch { /* ignore */ }
+}
+function saveCoverLookup() {
+  try {
+    localStorage.setItem("cabinet_cover_lookup", JSON.stringify(Object.fromEntries(coverLookup)));
+  } catch { /* ignore */ }
+}
+
+function needsCoverLookup(game) {
+  if (!isTauri) return false;
+  if (coverOverrides.has(game.id)) return false;   // user chose the art
+  if (coverLookup.has(game.id)) return false;      // already answered
+  if (lookupFailed.has(game.id)) return false;     // errored this session
+  if (/^steam_/.test(game.id || "")) return false; // Steam art is already right
+  // Custom games only get auto-art when the user didn't pick any themselves.
+  if (game.source === "Custom" && game.cover_image_path) return false;
+  return !!game.name;
+}
+
+function normalizeName(s) {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/[™®©]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Pick the result that best matches the name. `strict` refuses loose matches.
+function pickBestMatch(name, results, strict) {
+  if (!Array.isArray(results) || !results.length) return null;
+  const target = normalizeName(name);
+  if (!target) return null;
+  let best = results.find((r) => normalizeName(r.name) === target);
+  if (best) return best;
+  best = results.find((r) => {
+    const n = normalizeName(r.name);
+    return n.startsWith(target) || target.startsWith(n);
+  });
+  if (best) return best;
+  return strict ? null : results[0];
+}
+
+const lookupQueue = [];
+let lookingUp = false;
+let coverRefreshTimer = null;
+
+function requestCoverLookup(game) {
+  if (!needsCoverLookup(game)) return;
+  if (lookupQueue.some((g) => g.id === game.id)) return;
+  lookupQueue.push(game);
+  pumpCoverLookups();
+}
+
+async function pumpCoverLookups() {
+  if (lookingUp) return;
+  lookingUp = true;
+  while (lookupQueue.length) {
+    const game = lookupQueue.shift();
+    if (!needsCoverLookup(game)) continue;
+    let cover = "";
+    try {
+      const results = await invoke("search_steam_covers", { name: game.name });
+      const best = pickBestMatch(game.name, results, game.source === "Custom");
+      cover = best ? best.cover : "";
+    } catch {
+      // Transient failure: skip for now, try again next launch.
+      lookupFailed.add(game.id);
+      continue;
+    }
+    coverLookup.set(game.id, cover);
+    saveCoverLookup();
+    scheduleCoverRefresh();
+  }
+  lookingUp = false;
+}
+
+// Re-render once results settle, keeping the scroll position steady.
+function scheduleCoverRefresh() {
+  clearTimeout(coverRefreshTimer);
+  coverRefreshTimer = setTimeout(() => {
+    const top = scrollEl.scrollTop;
+    renderAll();
+    scrollEl.scrollTop = top;
+  }, 250);
+}
+
+// ── On-disk size ─────────────────────────────────────────────────────────────
+// Sizes are exact but require walking the folder, so we only measure games the
+// user can actually see and do it one at a time.
+const sizeQueue = [];
+let sizing = false;
+
+const sizeObserver = ("IntersectionObserver" in window)
+  ? new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const game = baseGames().find((g) => g.id === entry.target.dataset.size);
+        if (game) requestSize(game);
+        sizeObserver.unobserve(entry.target);
+      }
+    }, { root: scrollEl, rootMargin: "300px" })
+  : null;
+
+function observeSizeCells() {
+  if (!sizeObserver) return;
+  sizeObserver.disconnect();
+  document.querySelectorAll("[data-size]").forEach((el) => {
+    const game = baseGames().find((g) => g.id === el.dataset.size);
+    if (game && game.install_path) sizeObserver.observe(el);
+  });
+}
+
+function sizeLabel(game) {
+  if (!isTauri || !game.install_path) return "—";
+  const v = sizes.get(game.id);
+  return v === undefined ? "…" : formatSize(v);
+}
+
+function requestSize(game) {
+  if (!isTauri || !game.install_path) return;
+  if (sizes.has(game.id) || sizeQueue.some((g) => g.id === game.id)) return;
+  sizes.set(game.id, "pending");
+  sizeQueue.push(game);
+  pumpSizes();
+}
+
+async function pumpSizes() {
+  if (sizing) return;
+  sizing = true;
+  while (sizeQueue.length) {
+    const game = sizeQueue.shift();
+    try {
+      sizes.set(game.id, await invoke("get_game_size", { path: game.install_path }));
+    } catch {
+      sizes.set(game.id, null);
+    }
+    refreshSizeCells(game.id);
+  }
+  sizing = false;
+}
+
+function refreshSizeCells(id) {
+  const game = baseGames().find((g) => g.id === id);
+  if (!game) return;
+  document.querySelectorAll(`[data-size="${id}"]`).forEach((el) => {
+    el.textContent = sizeLabel(game);
+  });
+}
+
 // ── Visibility / filtering ───────────────────────────────────────────────────
 // Every game we know about, regardless of visibility settings.
 function baseGames() {
@@ -228,7 +406,6 @@ function getFilteredGames() {
     games = games.filter((g) => g.name.toLowerCase().includes(searchQuery));
   }
   if (sortBy === "az") games.sort((a, b) => a.name.localeCompare(b.name));
-  else if (sortBy === "hrs") games.sort((a, b) => (b.total_playtime_seconds || 0) - (a.total_playtime_seconds || 0));
   else if (sortBy === "recent") games.sort((a, b) => {
     if (!a.last_played) return 1;
     if (!b.last_played) return -1;
@@ -338,6 +515,14 @@ async function loadCachedGames() {
   } catch { /* ignore */ }
 }
 
+async function loadDetectedStores() {
+  if (!isTauri) return;
+  try {
+    const detected = await invoke("detect_stores");
+    if (Array.isArray(detected)) detectedStores = detected;
+  } catch { /* ignore */ }
+}
+
 async function loadStoreConfig() {
   if (!isTauri) {
     try {
@@ -370,6 +555,7 @@ async function scanGames() {
     return;
   }
   scrollEl.innerHTML = `<div class="empty">Scanning your game library…</div>`;
+  sizes.clear();
   try {
     const result = await invoke("scan_all_games");
     console.log("[SCAN] Raw result:", result);
@@ -438,11 +624,16 @@ function renderRail() {
   for (const [k, l] of NAV) {
     html += `<button class="ri ${currentPage === "lib" && currentFilter === k ? "on" : ""}" data-f="${k}">${l}<em>${cnt(k)}</em></button>`;
   }
-  html += `<h4>Stores</h4>`;
-  for (const s of STORE_NAMES) {
-    const enabled = storeConfig.stores[s.toLowerCase()] !== false;
-    if (enabled) {
-      html += `<button class="ri ${currentPage === "lib" && currentFilter === s ? "on" : ""}" data-f="${s}">${s}<em>${cnt(s)}</em></button>`;
+  if (settings.show_stores_in_sidebar !== false) {
+    const rows = STORE_CATALOG
+      .filter((s) => storeConfig.stores[s.id] !== false)
+      .map((s) => ({ s, n: cnt(s.source) }))
+      .filter((r) => r.n > 0);
+    if (rows.length) {
+      html += `<h4>Stores</h4>`;
+      for (const { s, n } of rows) {
+        html += `<button class="ri ${currentPage === "lib" && currentFilter === s.source ? "on" : ""}" data-f="${esc(s.source)}">${esc(s.name)}<em>${n}</em></button>`;
+      }
     }
   }
   html += `<h4>Collections</h4>`;
@@ -470,7 +661,6 @@ function renderTop() {
     <select class="sel" id="so" aria-label="Sort">
       <option value="recent">Recently played</option>
       <option value="az">A to Z</option>
-      <option value="hrs">Most played</option>
     </select>
     <div class="vt"><button data-v="grid" class="${currentView === "grid" ? "on" : ""}">Grid</button><button data-v="list" class="${currentView === "list" ? "on" : ""}">List</button></div>
     <button class="btn o" id="add">Add game</button>`;
@@ -494,23 +684,28 @@ function renderLibrary() {
           <b>${esc(g.name)}</b>
           <span class="dots" data-menu="${esc(g.id)}" role="button" tabindex="0" aria-label="Options for ${esc(g.name)}">&#8942;</span>
         </div>
-        <span>${esc(g.source)}, ${formatPlaytime(g.total_playtime_seconds)}${hiddenGames.has(g.id) ? " · hidden" : ""}</span>
+        <span>${esc(g.source)}${hiddenGames.has(g.id) ? " · hidden" : ""}</span>
       </button>`).join("") + `</div>`;
   } else {
-    h = `<table class="tbl"><thead><tr><th></th><th>Name</th><th>Store</th><th class="r">Played</th><th>Last played</th><th class="r">Size</th><th></th><th></th></tr></thead><tbody>`
+    h = `<table class="tbl"><thead><tr><th></th><th>Name</th><th>Store</th><th class="r">Size</th><th>Last played</th><th></th><th></th></tr></thead><tbody>`
       + games.map((g) => `
         <tr data-id="${esc(g.id)}">
           <td>${renderThumb(g)}</td>
           <td>${esc(g.name)}</td>
           <td>${esc(g.source)}</td>
-          <td class="r">${formatPlaytime(g.total_playtime_seconds)}</td>
+          <td class="r" data-size="${esc(g.id)}">${esc(sizeLabel(g))}</td>
           <td>${relativeTime(g.last_played)}</td>
-          <td class="r">—</td>
           <td class="r"><button class="btn" data-play="${esc(g.id)}" style="padding:5px 14px">Play</button></td>
           <td class="r"><button class="dots-inline" data-menu="${esc(g.id)}" aria-label="Options for ${esc(g.name)}">&#8942;</button></td>
         </tr>`).join("") + `</tbody></table>`;
   }
   scrollEl.innerHTML = h;
+
+  // Fill in anything that needs the network or the disk, lazily.
+  if (isTauri) {
+    games.forEach(requestCoverLookup);
+    if (currentView === "list") observeSizeCells();
+  }
 
   const qi = $("#q");
   if (qi) {
@@ -530,41 +725,61 @@ function renderSettings() {
   renderTop();
   const games = baseGames();
   const enabledStores = storeConfig.stores;
+  const detectedFor = (id) => detectedStores.find((d) => d.id === id);
 
-  const srcRow = (name, key, desc, count) => {
-    const on = enabledStores[key] !== false;
-    return `<div class="src"><div><b><i class="dot ${on ? "" : "off"}"></i>${name}</b></div>
-      <button class="tg ${on ? "on" : ""}" data-store="${key}" aria-pressed="${on}" aria-label="Toggle ${name}"></button>
-      <span style="grid-column:1/-1">${desc}</span>
-      <span style="grid-column:1/-1;color:var(--mute);font-size:12px">${on ? `${count} games found` : "Disabled — won't be scanned"}</span>
+  const srcRow = (store) => {
+    const on = enabledStores[store.id] !== false;
+    const det = detectedFor(store.id);
+    const installed = det ? det.installed : null;
+    const count = games.filter((g) => g.source === store.source).length;
+
+    let desc;
+    if (det && det.path && installed) desc = det.path;
+    else if (installed === true) desc = "Installed";
+    else if (installed === false) desc = "Not detected on this PC";
+    else desc = "Detection unavailable in the browser preview";
+
+    let status;
+    if (!on) status = "Hidden — this store won't be scanned or shown.";
+    else if (!store.supported) status = "Detected — game scanning for this launcher isn't supported yet.";
+    else if (count) status = `${count} games found`;
+    else if (installed === false) status = "No games found — launcher not detected.";
+    else status = "No games found yet.";
+
+    const dotClass = installed === false ? "off" : "";
+    return `<div class="src"><div><b><i class="dot ${dotClass}"></i>${esc(store.name)}</b></div>
+      <button class="tg ${on ? "on" : ""}" data-store="${store.id}" aria-pressed="${on}" aria-label="Toggle ${esc(store.name)}"></button>
+      <span style="grid-column:1/-1">${esc(desc)}</span>
+      <span style="grid-column:1/-1;color:var(--mute);font-size:12px">${esc(status)}</span>
     </div>`;
   };
 
-  const hiddenStores = Object.entries(enabledStores).filter(([, v]) => !v).map(([k]) => k);
+  const hiddenStores = Object.entries(enabledStores)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
 
   const hiddenSection = hiddenStores.length > 0
     ? `<h2>Hidden stores</h2>` +
       hiddenStores.map((k) => {
-        const name = STORE_NAMES.find((s) => s.toLowerCase() === k) || k;
-        return `<div class="src"><div><b>${name}</b></div>
-          <button class="btn o" data-restore="${k}">Add back</button>
-          <span style="grid-column:1/-1">This store is hidden. Click "Add back" to re-enable scanning.</span>
+        const store = STORE_CATALOG.find((s) => s.id === k);
+        const name = store ? store.name : k;
+        return `<div class="src"><div><b>${esc(name)}</b></div>
+          <button class="btn o" data-restore="${esc(k)}">Add back</button>
+          <span style="grid-column:1/-1">This store is hidden. Click "Add back" to re-enable it.</span>
         </div>`;
       }).join("")
     : "";
 
-  const tg = (key, n, d, v) => `<div class="src"><div><b>${n}</b></div><button class="tg" data-setting="${key}" aria-pressed="${v}" aria-label="${n}"></button><span style="grid-column:1/-1">${d}</span></div>`;
+  const tg = (key, n, d, v) => `<div class="src"><div><b>${n}</b></div><button class="tg ${v ? "on" : ""}" data-setting="${key}" aria-pressed="${v}" aria-label="${n}"></button><span style="grid-column:1/-1">${d}</span></div>`;
 
   scrollEl.innerHTML = `<div class="sec">
-    <h2>Detected stores</h2>
-    <div style="display:flex;align-items:center;justify-content:space-between"><span style="color:var(--mute)">Last scan: ${games.length} games total</span><button class="btn" id="rescan">Rescan now</button></div>
-    ${srcRow("Steam", "steam", "C:\\Program Files (x86)\\Steam", games.filter((g) => g.source === "Steam").length)}
-    ${srcRow("Epic Games", "epic", "C:\\Program Files\\Epic Games", games.filter((g) => g.source === "Epic").length)}
-    ${srcRow("GOG Galaxy", "gog", "C:\\GOG Games", games.filter((g) => g.source === "GOG").length)}
+    <h2>Stores &amp; launchers</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><span style="color:var(--mute)">${games.length} games across ${STORE_CATALOG.filter((s) => enabledStores[s.id] !== false).length} enabled launchers</span><button class="btn" id="rescan">Rescan now</button></div>
+    ${STORE_CATALOG.map(srcRow).join("")}
     ${hiddenSection}
     <h2>Behavior</h2>
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
-    ${tg("track_playtime", "Track play time", "Notice when a game is running and count the session.", settings.track_playtime)}
+    ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
     ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Cabinet.", settings.keep_in_tray)}
     ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
   </div>`;
@@ -580,7 +795,7 @@ function renderSettings() {
       saveStoreConfig();
       renderSettings();
       renderRail();
-      toast(current ? `${key} disabled` : `${key} enabled`);
+      toast(current ? `${key} hidden` : `${key} enabled`);
     });
   });
 
@@ -626,13 +841,13 @@ function openPanel(game) {
         <button class="${status === "playing" ? "on" : ""}" data-st="playing">Playing</button>
         <button class="${status === "finished" ? "on" : ""}" data-st="finished">Finished</button>
       </div></dd>
-      <dt>Played</dt><dd>${formatPlaytime(game.total_playtime_seconds)}</dd>
       <dt>Last played</dt><dd>${relativeTime(game.last_played)}</dd>
-      <dt>Install size</dt><dd>—</dd>
+      <dt>Install size</dt><dd data-size="${esc(game.id)}">${esc(sizeLabel(game))}</dd>
       <dt>Location</dt><dd style="word-break:break-all">${esc(loc)}</dd>
     </dl>`;
   panelEl.classList.add("on");
   scrimEl.classList.add("on");
+  requestSize(game);
 }
 
 function closePanel() {
@@ -644,7 +859,15 @@ function closePanel() {
 }
 
 // ── Add game dialog ──────────────────────────────────────────────────────────
+let dlgCover = "";      // artwork URL picked (or typed) in the add dialog
+let dlgArtTimer = null;
+
 function openDialog() {
+  dlgCover = "";
+  const art = $("#dlg-art");
+  if (art) art.value = "";
+  const sug = $("#dlg-sug");
+  if (sug) sug.innerHTML = "";
   dlgEl.classList.add("on");
   scrimEl.classList.add("on");
 }
@@ -652,12 +875,46 @@ function openDialog() {
 function closeDialog() {
   dlgEl.classList.remove("on");
   if (!panelEl.classList.contains("on")) scrimEl.classList.remove("on");
+  dlgCover = "";
+  clearTimeout(dlgArtTimer);
+  const sug = $("#dlg-sug");
+  if (sug) sug.innerHTML = "";
+}
+
+// Look up artwork suggestions on Steam for whatever name is typed.
+async function suggestArtwork() {
+  const box = $("#dlg-sug");
+  if (!box) return;
+  const name = ($("#dlg-name")?.value || "").trim();
+  if (name.length < 3) { box.innerHTML = ""; return; }
+  if (!isTauri) {
+    box.innerHTML = `<span class="sug-msg">Artwork search needs the desktop app — paste an image URL instead.</span>`;
+    return;
+  }
+  box.innerHTML = `<span class="sug-msg">Searching for artwork…</span>`;
+  let results = [];
+  try {
+    results = await invoke("search_steam_covers", { name });
+  } catch {
+    box.innerHTML = `<span class="sug-msg">Artwork search failed — paste an image URL instead.</span>`;
+    return;
+  }
+  if (!results || !results.length) {
+    box.innerHTML = `<span class="sug-msg">No matching artwork found — paste an image URL instead.</span>`;
+    return;
+  }
+  box.innerHTML = results.map((r) => `
+    <button type="button" class="sc ${dlgCover === r.cover ? "on" : ""}" data-art="${esc(r.cover)}" title="${esc(r.name)}">
+      <img src="${esc(r.cover)}" alt="${esc(r.name)}" loading="lazy">
+      <span>${esc(r.name)}</span>
+    </button>`).join("");
 }
 
 function addGameFromDialog() {
   const exe = $("#dlg-exe").value.trim();
   const name = $("#dlg-name").value.trim();
   const args = $("#dlg-args").value.trim();
+  const art = ($("#dlg-art")?.value || "").trim();
   if (!exe || !name) { toast("Please fill in executable and name"); return; }
   const game = {
     id: "custom-" + Date.now(),
@@ -666,7 +923,7 @@ function addGameFromDialog() {
     install_path: exe.replace(/[^\\/]+$/, ""),
     executable_path: exe,
     launch_command: args ? exe + " " + args : exe,
-    cover_image_path: null,
+    cover_image_path: art || null,
     source: "Custom",
     last_played: null,
     total_playtime_seconds: 0,
@@ -749,6 +1006,8 @@ function openCoverDialog(game) {
   coverPending = { value: null };
   const cur = coverOverrides.get(game.id) || "";
   $("#cov-url").value = /^https?:/i.test(cur) ? cur : "";
+  const box = $("#cov-sug");
+  if (box) box.innerHTML = "";
   renderCoverPreview();
   covDlgEl.classList.add("on");
   scrimEl.classList.add("on");
@@ -832,6 +1091,34 @@ function searchCoverFor(game) {
   openExternal(`https://www.google.com/search?tbm=isch&q=${q}`);
 }
 
+// Offer Steam cover art suggestions for the game being edited.
+async function suggestCoverForCurrent() {
+  if (!coverGame) return;
+  const box = $("#cov-sug");
+  if (!box) return;
+  if (!isTauri) {
+    box.innerHTML = `<span class="sug-msg">Artwork search needs the desktop app — paste an image URL instead.</span>`;
+    return;
+  }
+  box.innerHTML = `<span class="sug-msg">Searching for artwork…</span>`;
+  let results = [];
+  try {
+    results = await invoke("search_steam_covers", { name: coverGame.name });
+  } catch {
+    box.innerHTML = `<span class="sug-msg">Artwork search failed — paste an image URL instead.</span>`;
+    return;
+  }
+  if (!results || !results.length) {
+    box.innerHTML = `<span class="sug-msg">No matching artwork found — paste an image URL instead.</span>`;
+    return;
+  }
+  box.innerHTML = results.map((r) => `
+    <button type="button" class="sc" data-covart="${esc(r.cover)}" title="${esc(r.name)}">
+      <img src="${esc(r.cover)}" alt="${esc(r.name)}" loading="lazy">
+      <span>${esc(r.name)}</span>
+    </button>`).join("");
+}
+
 // ── Controller mode ──────────────────────────────────────────────────────────
 function openPad() {
   const games = baseGames();
@@ -852,7 +1139,7 @@ function renderPad() {
   $("#prow").innerHTML = games.map((game, i) =>
     `<div class="it ${i === controllerIndex ? "f" : ""}">${renderCover(game)}</div>`
   ).join("");
-  $("#pinfo").innerHTML = `<h2>${esc(g.name)}</h2><p>${esc(g.source)}, ${formatPlaytime(g.total_playtime_seconds)} played, last ${relativeTime(g.last_played).toLowerCase()}</p>`;
+  $("#pinfo").innerHTML = `<h2>${esc(g.name)}</h2><p>${esc(g.source)} · last played ${relativeTime(g.last_played).toLowerCase()}</p>`;
   $("#pc").textContent = (controllerIndex + 1) + " of " + games.length;
   const f = $("#prow .f");
   if (f) f.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
@@ -933,6 +1220,17 @@ function setupEventListeners() {
     if (e.target.id === "add") { openDialog(); return; }
     if (e.target.id === "dok") { addGameFromDialog(); return; }
     if (e.target.id === "dlg-browse") { $("#dlg-file").click(); return; }
+    if (e.target.id === "dlg-find") { suggestArtwork(); return; }
+
+    // Artwork suggestion pick
+    const art = e.target.closest("[data-art]");
+    if (art) {
+      dlgCover = art.dataset.art;
+      const field = $("#dlg-art");
+      if (field) field.value = dlgCover;
+      document.querySelectorAll("#dlg-sug .sc").forEach((b) => b.classList.toggle("on", b === art));
+      return;
+    }
 
     // Panel actions
     if (e.target.id === "fv" && selectedGame) { toggleFavorite(selectedGame.id); openPanel(selectedGame); return; }
@@ -942,8 +1240,19 @@ function setupEventListeners() {
     // Cover dialog actions
     if (e.target.id === "cov-file") { $("#cov-input").click(); return; }
     if (e.target.id === "cov-search") { searchCoverFor(coverGame); return; }
+    if (e.target.id === "cov-find") { suggestCoverForCurrent(); return; }
     if (e.target.id === "cov-reset") { resetCover(); return; }
     if (e.target.id === "cov-save") { saveCover(); return; }
+
+    // Cover dialog suggestion pick
+    const covart = e.target.closest("[data-covart]");
+    if (covart) {
+      coverPending = { value: null };
+      $("#cov-url").value = covart.dataset.covart;
+      document.querySelectorAll("#cov-sug .sc").forEach((b) => b.classList.toggle("on", b === covart));
+      renderCoverPreview();
+      return;
+    }
 
     // Status segmented control
     const sg = e.target.closest("#st button");
@@ -973,6 +1282,26 @@ function setupEventListeners() {
     fileInput.addEventListener("change", (e) => {
       const f = e.target.files[0];
       if (f) $("#dlg-exe").value = f.path || f.name;
+    });
+  }
+
+  // Add-game: suggest artwork as the user types the name
+  const nameInput = $("#dlg-name");
+  if (nameInput) {
+    nameInput.addEventListener("input", () => {
+      clearTimeout(dlgArtTimer);
+      dlgArtTimer = setTimeout(suggestArtwork, 700);
+    });
+  }
+
+  // Add-game: typing a URL clears any picked suggestion
+  const artInput = $("#dlg-art");
+  if (artInput) {
+    artInput.addEventListener("input", () => {
+      if (artInput.value.trim() !== dlgCover) {
+        dlgCover = "";
+        document.querySelectorAll("#dlg-sug .sc").forEach((b) => b.classList.remove("on"));
+      }
     });
   }
 
@@ -1036,11 +1365,13 @@ async function init() {
   loadCustomGames();
   loadGameStatuses();
   loadHiddenGames();
+  loadCoverLookup();
   setupEventListeners();
   await loadCoverOverrides();
   await loadFavorites();
   await loadCachedGames();
   await loadStoreConfig();
+  await loadDetectedStores();
   renderAll();
   if (isTauri) await scanGames();
 }
