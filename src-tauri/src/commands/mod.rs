@@ -1,4 +1,4 @@
-use crate::models::GameEntry;
+use crate::models::{GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
 use crate::services::launcher::GameLauncher;
@@ -13,9 +13,12 @@ pub struct AppState {
 
 #[tauri::command]
 pub fn scan_all_games(state: State<'_, Mutex<AppState>>) -> Result<Vec<GameEntry>, String> {
-    let aggregator = LibraryAggregator::new();
-    let games = aggregator.scan_all();
     let state = state.lock().unwrap();
+    let config_path = state.cache_dir.join("store_config.json");
+    let store_config = StoreConfig::load(&config_path);
+    let enabled = store_config.enabled_stores();
+    let aggregator = LibraryAggregator::new();
+    let games = aggregator.scan_enabled(&enabled);
     let cache = CacheService::new(state.cache_dir.clone());
     let _ = cache.save(&games);
     Ok(games)
@@ -42,9 +45,9 @@ pub fn rescan_platform(
     platform: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<GameEntry>, String> {
+    let state = state.lock().unwrap();
     let aggregator = LibraryAggregator::new();
     let games = aggregator.scan_platform(&platform);
-    let state = state.lock().unwrap();
     let cache = CacheService::new(state.cache_dir.clone());
     let _ = cache.save(&games);
     Ok(games)
@@ -80,4 +83,22 @@ pub fn get_game_details(game_id: String, state: State<'_, Mutex<AppState>>) -> R
     let cache = CacheService::new(state.cache_dir.clone());
     let games = cache.load().unwrap_or_default();
     Ok(games.into_iter().find(|g| g.id == game_id))
+}
+
+#[tauri::command]
+pub fn get_store_config(state: State<'_, Mutex<AppState>>) -> Result<StoreConfig, String> {
+    let state = state.lock().unwrap();
+    let config_path = state.cache_dir.join("store_config.json");
+    Ok(StoreConfig::load(&config_path))
+}
+
+#[tauri::command]
+pub fn set_store_config(
+    config: StoreConfig,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<StoreConfig, String> {
+    let state = state.lock().unwrap();
+    let config_path = state.cache_dir.join("store_config.json");
+    config.save(&config_path)?;
+    Ok(config)
 }

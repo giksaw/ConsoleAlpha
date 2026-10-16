@@ -1,3 +1,6 @@
+mod store_config;
+pub use store_config::StoreConfig;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
