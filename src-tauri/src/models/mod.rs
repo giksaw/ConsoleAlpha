@@ -35,6 +35,8 @@ pub struct GameEntry {
     pub is_installed: bool,
 }
 
+/// Where a game came from. The serialized names are what the frontend matches
+/// on (`STORE_CATALOG[].source`), so don't rename variants without updating it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GameSource {
     Steam,
@@ -42,6 +44,12 @@ pub enum GameSource {
     GOG,
     Xbox,
     BattleNet,
+    Ubisoft,
+    EA,
+    Amazon,
+    #[serde(rename = "itch.io")]
+    Itch,
+    Rockstar,
     Custom,
 }
 
@@ -53,7 +61,18 @@ impl GameSource {
             GameSource::GOG => "GOG",
             GameSource::Xbox => "Xbox",
             GameSource::BattleNet => "Battle.net",
+            GameSource::Ubisoft => "Ubisoft Connect",
+            GameSource::EA => "EA App",
+            GameSource::Amazon => "Amazon Games",
+            GameSource::Itch => "itch.io",
+            GameSource::Rockstar => "Rockstar Games",
             GameSource::Custom => "Custom",
         }
     }
 }
+
+/// Every store id the scanners understand, in scan order. Earlier stores win
+/// when two report the same install folder (e.g. an EA game bought on Steam).
+pub const ALL_STORES: &[&str] = &[
+    "steam", "epic", "gog", "battlenet", "ubisoft", "ea", "xbox", "amazon", "itch", "rockstar",
+];

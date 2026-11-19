@@ -199,11 +199,7 @@ pub async fn search_steam_covers(name: String) -> Result<Vec<CoverSuggestion>, S
         encode_query(trimmed)
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent("CabinetLauncher/0.1")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = http_client()?;
 
     let response = client
         .get(&url)
@@ -265,6 +261,106 @@ pub async fn search_steam_covers(name: String) -> Result<Vec<CoverSuggestion>, S
     found.sort_by_key(|(index, _)| *index);
 
     Ok(found.into_iter().map(|(_, suggestion)| suggestion).collect())
+}
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .user_agent("CabinetLauncher/0.1")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+}
+
+/// GET a SteamGridDB API route with the user's key and return its `data` array.
+async fn sgdb_get(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    let response = client
+        .get(url)
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|e| format!("SteamGridDB request failed: {}", e))?;
+    match response.status().as_u16() {
+        200 => {}
+        401 | 403 => return Err("SteamGridDB rejected the API key".to_string()),
+        404 => return Ok(Vec::new()),
+        code => return Err(format!("SteamGridDB returned status {}", code)),
+    }
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Invalid SteamGridDB response: {}", e))?;
+    Ok(json
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// Look up 600x900 portrait art on SteamGridDB, which covers games that aren't
+/// sold on Steam. Needs the user's free API key (steamgriddb.com → Preferences
+/// → API); the key is only ever sent to SteamGridDB.
+#[tauri::command]
+pub async fn search_steamgriddb_covers(
+    name: String,
+    api_key: String,
+) -> Result<Vec<CoverSuggestion>, String> {
+    let name = name.trim();
+    let api_key = api_key.trim();
+    if name.is_empty() || api_key.is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = http_client()?;
+
+    let search_url = format!(
+        "https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+        encode_query(name)
+    );
+    let matches = sgdb_get(&client, &search_url, api_key).await?;
+
+    // Fetch grids for the top few matches in parallel, keeping match order.
+    let mut handles = Vec::new();
+    for game in matches.iter().take(3) {
+        let Some(id) = game.get("id").and_then(|v| v.as_u64()) else { continue };
+        let title = game
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let client = client.clone();
+        let key = api_key.to_string();
+        handles.push(tauri::async_runtime::spawn(async move {
+            let url = format!(
+                "https://www.steamgriddb.com/api/v2/grids/game/{}?dimensions=600x900&types=static&nsfw=false&humor=false",
+                id
+            );
+            let grids = sgdb_get(&client, &url, &key).await;
+            (title, grids)
+        }));
+    }
+
+    let mut out = Vec::new();
+    for handle in handles {
+        let Ok((title, grids)) = handle.await else { continue };
+        // A bad key fails every request the same way; report it once.
+        for grid in grids?.iter().take(4) {
+            let (Some(id), Some(url)) = (
+                grid.get("id").and_then(|v| v.as_u64()),
+                grid.get("url").and_then(|v| v.as_str()),
+            ) else {
+                continue;
+            };
+            out.push(CoverSuggestion {
+                id,
+                name: title.clone(),
+                cover: url.to_string(),
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// Total size of every file under `path`, in bytes.

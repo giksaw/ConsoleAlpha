@@ -19,6 +19,16 @@ impl GameLauncher {
             return shell_open(&game.launch_command)
                 .map_err(|e| format!("Failed to launch {}: {}", game.name, e));
         }
+        // Packaged (Xbox / Microsoft Store) games: `shell:AppsFolder\<PFN>!<AppId>`.
+        // Their exe can't be run directly, and rundll32 doesn't resolve shell:
+        // paths, so hand it to Explorer.
+        if game.launch_command.starts_with("shell:AppsFolder\\") {
+            return Command::new("explorer")
+                .arg(&game.launch_command)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("Failed to launch {}: {}", game.name, e));
+        }
 
         let exe = Path::new(&game.executable_path);
         if !exe.is_file() {

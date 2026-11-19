@@ -1,6 +1,14 @@
-pub mod steam;
+pub mod amazon;
+pub mod battlenet;
+mod common;
+pub mod ea;
 pub mod epic;
 pub mod gog;
+pub mod itch;
+pub mod rockstar;
+pub mod steam;
+pub mod ubisoft;
+pub mod xbox;
 
 use crate::models::GameEntry;
 

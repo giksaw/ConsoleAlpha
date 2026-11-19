@@ -58,12 +58,13 @@ impl StoreConfig {
         self.stores.insert(store.to_lowercase(), enabled);
     }
 
-    /// Get list of enabled store names
+    /// Every known store that isn't switched off, in scan order. Stores missing
+    /// from the saved file (e.g. added in a newer version) count as enabled.
     pub fn enabled_stores(&self) -> Vec<String> {
-        self.stores
+        super::ALL_STORES
             .iter()
-            .filter(|(_, &v)| v)
-            .map(|(k, _)| k.clone())
+            .filter(|id| self.is_enabled(id))
+            .map(|id| id.to_string())
             .collect()
     }
 

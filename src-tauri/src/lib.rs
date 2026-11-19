@@ -35,6 +35,7 @@ pub fn run() {
             commands::open_url,
             commands::open_game_folder,
             commands::search_steam_covers,
+            commands::search_steamgriddb_covers,
             commands::get_game_size,
             commands::detect_stores,
             tray::set_keep_in_tray,
