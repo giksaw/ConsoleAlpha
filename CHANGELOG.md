@@ -343,11 +343,40 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 7 — Seven More Launchers, SteamGridDB Art, Saved Sizes (Nov 19, 2026)
+
+### Backend Changes
+| File | Change |
+|---|---|
+| `src-tauri/src/scanners/common.rs` | **New** — Windows uninstall-registry reader, exe guessing, flag/XML parsers, `make_entry` |
+| `src-tauri/src/scanners/{battlenet,ubisoft,ea,xbox,amazon,itch,rockstar}.rs` | **New** scanners (formats in README → Store Detection) |
+| `src-tauri/src/models/mod.rs` | New `GameSource` variants (`itch.io` serialized with its dot); `ALL_STORES` scan order |
+| `src-tauri/src/models/store_config.rs` | `enabled_stores()` walks `ALL_STORES`, so stores missing from an old `store_config.json` are scanned |
+| `src-tauri/src/services/aggregator.rs` | All 10 scanners; same install folder from two stores is kept once (first store wins) |
+| `src-tauri/src/services/launcher.rs` | `shell:AppsFolder\…` targets (Xbox) are opened with Explorer |
+| `src-tauri/src/commands/mod.rs` | **New** `search_steamgriddb_covers(name, api_key)` — 600×900 static grids for the top 3 matches |
+| `src-tauri/Cargo.toml` | Added `flate2` (already in the tree) for itch.io's gzipped receipts |
+
+### Frontend Changes
+- **All 10 launchers are scanned**; Sources shows real game counts for each, and store names display properly ("Battle.net", not "BattleNet").
+- **Artwork for non-Steam games:** optional SteamGridDB API key under *Sources & settings → Artwork*. Automatic lookups try Steam first, then SteamGridDB; both *Find artwork* buttons show results from both. Saving a key re-looks-up every game that previously found nothing.
+- **"No match" lookups retry after 14 days** instead of being cached forever (`cabinet_cover_miss`).
+- **Install sizes are saved** (`cabinet_sizes`) and reused for 7 days while the install folder is unchanged; an older size is shown immediately while it's re-measured.
+- **Start on a gamepad opens controller mode** (watched only while a controller is connected and the window is visible).
+- Toggling a store now rescans in the background; a background scan no longer replaces the settings page with "Scanning…".
+
+### Verification
+- 14 unit tests cover the parsers (uninstall strings, `installerdata.xml`, `MicrosoftGame.config`, `.GamingRoot`, itch receipts/manifests, path de-duplication).
+- A full scan on the dev machine still returns exactly its 3 real games. Leftover launcher data there — EA registry keys, an EA-published game in a Steam folder (*It Takes Two*), Battle.net agent data without the client, an empty `XboxGames` folder — produced no false entries.
+- **Not tested against real installs:** none of the seven new launchers has games on the dev machine.
+
+---
+
 ## Known Issues
-- **Launchers other than Steam/Epic/GOG are detected but not scanned** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar appear in Sources with install status, but no games are read from them yet.
-- **Games not on Steam get no artwork** — the name lookup can only find titles that also exist on Steam; everything else falls back to the store thumbnail or a gradient tile.
-- **Cover lookups are cached permanently** — if a game later appears on Steam it won't be re-looked-up. Clearing `cabinet_cover_lookup` from localStorage forces a retry.
-- **Sizes are recomputed each launch** — they're exact but not cached between sessions, so a large game is re-walked the first time you open it.
+- **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
+- **itch.io: only the default install folder** (`%APPDATA%\itch\apps`) is scanned; extra install locations set in the itch app are not.
+- **EA, Rockstar, Battle.net, itch.io launch through the game's exe** (which hands off to its launcher); if a title's exe is guessed wrong, set it right by adding it as a local game.
+- **Without a SteamGridDB key, games not on Steam get no artwork** — they fall back to the store thumbnail or a gradient tile.
 - **Desktop folder builds fail** with file-lock errors — always build from `C:\Users\91623\code\GAMELAUCNHER`.
 - **Git remote contains a plaintext PAT** in `.git/config` (and `.env.local`) — should be revoked and replaced with a credential helper.
 - **GOG changes are untested** — no GOG install on the dev machine; registry value names (`exe`, `launchParam`) follow GOG's documented layout.
@@ -369,12 +398,20 @@ game-launcher/
 │   │   │   └── store_config.rs  # StoreConfig (store_config.json)
 │   │   ├── scanners/
 │   │   │   ├── mod.rs           # PlatformScanner trait
+│   │   │   ├── common.rs        # Uninstall registry, exe guessing, parsers
 │   │   │   ├── steam.rs         # Steam scanner (dedup + 600x900 covers)
 │   │   │   ├── epic.rs          # Epic Games scanner
-│   │   │   └── gog.rs           # GOG scanner
+│   │   │   ├── gog.rs           # GOG scanner
+│   │   │   ├── battlenet.rs     # Battle.net
+│   │   │   ├── ubisoft.rs       # Ubisoft Connect
+│   │   │   ├── ea.rs            # EA app / Origin
+│   │   │   ├── xbox.rs          # Xbox app (XboxGames)
+│   │   │   ├── amazon.rs        # Amazon Games
+│   │   │   ├── itch.rs          # itch.io
+│   │   │   └── rockstar.rs      # Rockstar Games Launcher
 │   │   ├── services/
 │   │   │   ├── mod.rs
-│   │   │   ├── aggregator.rs    # Combines scanners; enabled-store filtering
+│   │   │   ├── aggregator.rs    # Combines scanners; enabled stores; path de-dup
 │   │   │   ├── cache.rs         # Disk cache + favorites persistence (app data dir)
 │   │   │   └── launcher.rs      # Game launching + shell_open (links without cmd)
 │   │   └── commands/mod.rs      # Tauri commands

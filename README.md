@@ -4,7 +4,7 @@ A unified desktop game launcher for Windows built with [Tauri](https://tauri.app
 
 ## Features
 
-- **Multi-store library** — Automatically detects and scans games from Steam, Epic Games, and GOG Galaxy
+- **Multi-store library** — Scans Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar Games
 - **Custom games** — Manually add executables for games not in a store library
 - **Grid & list views** — Switch between a visual grid and a detailed table view
 - **Search & sort** — Filter by name, sort by recently played or A-Z
@@ -12,7 +12,7 @@ A unified desktop game launcher for Windows built with [Tauri](https://tauri.app
 - **Favorites & hiding** — Mark favorites; hide games you don't want to see (always reversible)
 - **Custom cover art** — Automatic Steam artwork lookup by name, or pick your own image
 - **Game status** — Organize your library with Backlog / Playing / Finished states
-- **Controller mode** — Navigate and launch games with a gamepad or keyboard (A = play, B = back, Y = favorite)
+- **Controller mode** — Open with a gamepad's Start button; navigate and launch with a gamepad or keyboard (A = play, B = back, Y = favorite)
 - **Settings** — Scan on startup, keep running in the tray, hide removed games, and per-store toggles
 
 ## Tech Stack
@@ -89,21 +89,35 @@ Open http://localhost:5173 in your browser. Note that game scanning and launchin
 
 Cabinet reads installed games from:
 
-| Store        | Source                                                         | Launched via                    |
-| ------------ | -------------------------------------------------------------- | ------------------------------- |
-| Steam        | Registry `SteamPath` → `libraryfolders.vdf` → `appmanifest_*.acf` | `steam://rungameid/<id>`       |
-| Epic Games   | `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests\*.item`   | `com.epicgames.launcher://` link |
-| GOG Galaxy   | Registry `HKLM\SOFTWARE\WOW6432Node\GOG.com\Games`             | The game's executable           |
+| Store           | Source                                                              | Launched via                       |
+| --------------- | ------------------------------------------------------------------- | ---------------------------------- |
+| Steam           | Registry `SteamPath` → `libraryfolders.vdf` → `appmanifest_*.acf`   | `steam://rungameid/<id>`           |
+| Epic Games      | `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests\*.item`        | `com.epicgames.launcher://` link   |
+| GOG Galaxy      | Registry `HKLM\SOFTWARE\WOW6432Node\GOG.com\Games`                  | The game's executable              |
+| Battle.net      | Uninstall entries run by `Blizzard Uninstaller.exe --uid=…`         | The game's `… Launcher.exe`        |
+| Ubisoft Connect | Registry `…\Ubisoft\Launcher\Installs\<id>`                         | `uplay://launch/<id>/0`            |
+| EA App / Origin | Uninstall entries run by EA's `EAInstaller` + `__Installer\installerdata.xml` | The game's executable (starts the EA app) |
+| Xbox            | `<drive>:\XboxGames\*\Content\MicrosoftGame.config`                 | `shell:AppsFolder\<family>!<app>`  |
+| Amazon Games    | Uninstall entries run by `Amazon Game Remover.exe -p <id>`          | `amazon-games://play/<id>`         |
+| itch.io         | `%APPDATA%\itch\apps\*\.itch\receipt.json.gz`                       | The game's executable              |
+| Rockstar Games  | Uninstall entries run by `Rockstar Games\Launcher\uninstall.exe`    | The game's executable              |
 
-Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar are
-detected (shown in Sources with install status) but their games are not scanned yet.
+When two stores report the same install folder (e.g. an EA game bought on
+Steam), it is listed once, under the store scanned first.
+
+## Cover art
+
+Covers come from your own picks first, then a by-name Steam lookup, then the
+store's own art. For games that aren't on Steam, add a free
+[SteamGridDB](https://www.steamgriddb.com/profile/preferences/api) API key in
+**Sources & settings → Artwork**; it is stored locally and only sent to SteamGridDB.
 
 ## Where data is stored
 
 | Data                                   | Location                                  |
 | -------------------------------------- | ----------------------------------------- |
 | Library cache, favorites, store toggles | `%APPDATA%\com.gamelauncher.app\*.json`   |
-| Custom games, settings, statuses, hidden games, last launches | WebView `localStorage` (`cabinet_*` keys) |
+| Custom games, settings (incl. SteamGridDB key), statuses, hidden games, last launches, cover lookups, install sizes | WebView `localStorage` (`cabinet_*` keys) |
 | Custom cover images                    | WebView IndexedDB (`cabinet` → `covers`)  |
 
 ## License
