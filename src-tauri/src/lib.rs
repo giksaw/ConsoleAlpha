@@ -2,6 +2,7 @@ pub mod models;
 pub mod scanners;
 pub mod services;
 pub mod commands;
+mod tray;
 
 use tauri::Manager;
 use std::sync::Mutex;
@@ -10,14 +11,17 @@ use std::sync::Mutex;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // Initialize cache directory
-            let cache_dir = app.path().app_data_dir().unwrap();
-            std::fs::create_dir_all(&cache_dir)?;
+            // Library cache, favorites and store config live in the per-user app
+            // data dir (%APPDATA%\com.gamelauncher.app). It used to be %TEMP%,
+            // which was never created and is routinely cleaned out.
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+            app.manage(Mutex::new(commands::AppState { cache_dir: data_dir }));
+            tray::setup(app)?;
             Ok(())
         })
-        .manage(Mutex::new(commands::AppState {
-            cache_dir: std::env::temp_dir().join("game-launcher"),
-        }))
+        .manage(tray::KeepInTray::default())
+        .on_window_event(tray::on_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::scan_all_games,
             commands::launch_game,
@@ -33,6 +37,7 @@ pub fn run() {
             commands::search_steam_covers,
             commands::get_game_size,
             commands::detect_stores,
+            tray::set_keep_in_tray,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

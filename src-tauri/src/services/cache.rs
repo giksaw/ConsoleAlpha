@@ -1,7 +1,7 @@
 use crate::models::GameEntry;
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct CacheService {
     cache_path: PathBuf,
@@ -26,9 +26,7 @@ impl CacheService {
     pub fn save(&self, games: &[GameEntry]) -> Result<(), String> {
         let json = serde_json::to_string_pretty(games)
             .map_err(|e| format!("Failed to serialize cache: {}", e))?;
-        fs::write(&self.cache_path, json)
-            .map_err(|e| format!("Failed to write cache: {}", e))?;
-        Ok(())
+        write_file(&self.cache_path, &json).map_err(|e| format!("Failed to write cache: {}", e))
     }
 
     pub fn load_favorites(&self) -> HashSet<String> {
@@ -39,8 +37,16 @@ impl CacheService {
     pub fn save_favorites(&self, favorites: &HashSet<String>) -> Result<(), String> {
         let json = serde_json::to_string_pretty(favorites)
             .map_err(|e| format!("Failed to serialize favorites: {}", e))?;
-        fs::write(&self.favorites_path, json)
-            .map_err(|e| format!("Failed to write favorites: {}", e))?;
-        Ok(())
+        write_file(&self.favorites_path, &json)
+            .map_err(|e| format!("Failed to write favorites: {}", e))
     }
+}
+
+/// Write a file, creating its folder first — `fs::write` alone fails when the
+/// data directory doesn't exist yet (e.g. on a fresh install).
+fn write_file(path: &Path, contents: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)
 }

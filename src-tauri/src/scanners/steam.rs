@@ -83,12 +83,27 @@ fn extract_vdf_string(line: &str) -> Option<String> {
     }
 }
 
+/// Steam "apps" that aren't games and can't be launched by the user.
+const NON_GAME_APP_IDS: &[&str] = &[
+    "228980", // Steamworks Common Redistributables
+];
+
 fn parse_app_manifest(path: &Path) -> Option<GameEntry> {
     let content = fs::read_to_string(path).ok()?;
 
     let app_id = extract_vdf_value(&content, "appid")?;
+    if NON_GAME_APP_IDS.contains(&app_id.as_str()) {
+        return None;
+    }
     let name = extract_vdf_value(&content, "name")?;
     let install_dir = extract_vdf_value(&content, "installdir")?;
+
+    // "LastPlayed" is a Unix timestamp; "0" means never played.
+    let last_played = extract_vdf_value(&content, "LastPlayed")
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|&t| t > 0)
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .map(|d| d.to_rfc3339());
 
     // The manifest lives in <library>\steamapps, and games live in
     // <library>\steamapps\common\<installdir>. The "steamapps" component is
@@ -116,7 +131,7 @@ fn parse_app_manifest(path: &Path) -> Option<GameEntry> {
         launch_command: format!("steam://rungameid/{}", app_id),
         cover_image_path: Some(cover_image_path),
         source: GameSource::Steam,
-        last_played: None,
+        last_played,
         total_playtime_seconds: 0,
         is_installed: game_path.exists(),
     })

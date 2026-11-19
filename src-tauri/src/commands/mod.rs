@@ -1,27 +1,40 @@
 use crate::models::{CoverSuggestion, DetectedStore, GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
-use crate::services::launcher::GameLauncher;
+use crate::services::launcher::{shell_open, GameLauncher};
 use tauri::State;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub struct AppState {
+    /// Where the game cache, favorites and store config live (the app data dir).
     pub cache_dir: PathBuf,
 }
 
+/// Copy the data directory out of the shared state, releasing the lock at once.
+fn data_dir(state: &State<'_, Mutex<AppState>>) -> Result<PathBuf, String> {
+    state
+        .lock()
+        .map(|s| s.cache_dir.clone())
+        .map_err(|_| "App state is unavailable".to_string())
+}
+
+/// Scan every enabled store. Runs on the blocking pool: a sync command would run
+/// on the main thread and freeze the window for the whole scan.
 #[tauri::command]
-pub fn scan_all_games(state: State<'_, Mutex<AppState>>) -> Result<Vec<GameEntry>, String> {
-    let state = state.lock().unwrap();
-    let config_path = state.cache_dir.join("store_config.json");
-    let store_config = StoreConfig::load(&config_path);
-    let enabled = store_config.enabled_stores();
-    let aggregator = LibraryAggregator::new();
-    let games = aggregator.scan_enabled(&enabled);
-    let cache = CacheService::new(state.cache_dir.clone());
-    let _ = cache.save(&games);
-    Ok(games)
+pub async fn scan_all_games(state: State<'_, Mutex<AppState>>) -> Result<Vec<GameEntry>, String> {
+    let dir = data_dir(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let store_config = StoreConfig::load(&dir.join("store_config.json"));
+        let games = LibraryAggregator::new().scan_enabled(&store_config.enabled_stores());
+        if let Err(e) = CacheService::new(dir).save(&games) {
+            eprintln!("[cache] {}", e);
+        }
+        games
+    })
+    .await
+    .map_err(|e| format!("Scan failed: {}", e))
 }
 
 #[tauri::command]
@@ -40,17 +53,31 @@ pub fn launch_game(game: GameEntry) -> Result<(), String> {
     launcher.launch(&game)
 }
 
+/// Rescan one store and merge it into the cached library. Returns the full
+/// library, so other stores' games are kept rather than overwritten.
 #[tauri::command]
-pub fn rescan_platform(
+pub async fn rescan_platform(
     platform: String,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<GameEntry>, String> {
-    let state = state.lock().unwrap();
-    let aggregator = LibraryAggregator::new();
-    let games = aggregator.scan_platform(&platform);
-    let cache = CacheService::new(state.cache_dir.clone());
-    let _ = cache.save(&games);
-    Ok(games)
+    let dir = data_dir(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let fresh = LibraryAggregator::new().scan_platform(&platform);
+        // Scanner ids are "<store>_<id>" (steam_, epic_, gog_).
+        let prefix = format!("{}_", platform.to_lowercase());
+        let cache = CacheService::new(dir);
+        let mut games: Vec<GameEntry> = cache
+            .load()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|g| !g.id.starts_with(&prefix))
+            .collect();
+        games.extend(fresh);
+        cache.save(&games)?;
+        Ok(games)
+    })
+    .await
+    .map_err(|e| format!("Rescan failed: {}", e))?
 }
 
 #[tauri::command]
@@ -109,26 +136,7 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("Only http(s) URLs are allowed".to_string());
     }
-
-    #[cfg(target_os = "windows")]
-    {
-        // The empty "" is the window title placeholder required by `start`.
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
-            .spawn()
-            .map_err(|e| format!("Failed to open URL: {}", e))?;
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        std::process::Command::new(opener)
-            .arg(&url)
-            .spawn()
-            .map_err(|e| format!("Failed to open URL: {}", e))?;
-    }
-
-    Ok(())
+    shell_open(&url).map_err(|e| format!("Failed to open URL: {}", e))
 }
 
 /// Reveal an install folder in the OS file manager.

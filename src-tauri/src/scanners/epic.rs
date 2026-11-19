@@ -48,8 +48,37 @@ fn parse_manifest(path: &Path) -> Option<GameEntry> {
     let app_name = manifest.get("AppName")?.as_str()?.to_string();
     let launch_exe = manifest.get("LaunchExecutable")?.as_str()?.to_string();
 
+    // Skip DLC and add-ons: they have their own manifest but launch via the base game.
+    let str_field = |key: &str| {
+        manifest
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    if manifest.get("bIsApplication").and_then(|v| v.as_bool()) == Some(false) {
+        return None;
+    }
+    if str_field("MainGameAppName").is_some_and(|main| main != app_name) {
+        return None;
+    }
+
     let install_path = PathBuf::from(&install_location);
     let executable_path = install_path.join(&launch_exe);
+
+    // Launch through the Epic launcher, not the exe: most Epic titles need the
+    // launcher's login token and fail or bounce back when started directly.
+    let launch_command = match (str_field("CatalogNamespace"), str_field("CatalogItemId")) {
+        (Some(namespace), Some(item)) => format!(
+            "com.epicgames.launcher://apps/{}%3A{}%3A{}?action=launch&silent=true",
+            namespace, item, app_name
+        ),
+        _ => format!(
+            "com.epicgames.launcher://apps/{}?action=launch&silent=true",
+            app_name
+        ),
+    };
 
     // Some Epic titles ship a cover thumbnail in the manifest; use it when present.
     let cover_image_path = manifest
@@ -64,7 +93,7 @@ fn parse_manifest(path: &Path) -> Option<GameEntry> {
         description: None,
         install_path: install_location,
         executable_path: executable_path.to_string_lossy().to_string(),
-        launch_command: executable_path.to_string_lossy().to_string(),
+        launch_command,
         cover_image_path,
         source: GameSource::Epic,
         last_played: None,

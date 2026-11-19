@@ -36,16 +36,32 @@ fn parse_gog_game(gog_games: &RegKey, game_key: &str) -> Option<GameEntry> {
 
     let install_path = PathBuf::from(&game_path);
 
-    // Find executable
-    let executable = find_gog_executable(&install_path, &game_name);
+    // GOG records the real executable and its launch parameters; fall back to
+    // guessing only when those values are missing or stale.
+    let reg_value = |name: &str| {
+        game.get_value::<String, _>(name)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let executable = reg_value("exe")
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| find_gog_executable(&install_path, &game_name));
+    let exe_str = executable.to_string_lossy().to_string();
+    // The launcher reads arguments as whatever follows the exe in launch_command.
+    let launch_command = match reg_value("launchParam") {
+        Some(params) => format!("{} {}", exe_str, params),
+        None => exe_str.clone(),
+    };
 
     Some(GameEntry {
         id: format!("gog_{}", game_key),
         name: game_name,
         description: None,
         install_path: game_path.clone(),
-        executable_path: executable.to_string_lossy().to_string(),
-        launch_command: executable.to_string_lossy().to_string(),
+        executable_path: exe_str,
+        launch_command,
         cover_image_path: None,
         source: GameSource::GOG,
         last_played: None,
