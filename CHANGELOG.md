@@ -312,14 +312,47 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 6 — Bug Sweep, Tray Mode & Gamepad (Nov 19, 2026)
+
+### Backend Changes
+| File | Change |
+|---|---|
+| `src-tauri/src/lib.rs` | Data now lives in `app_data_dir()` (`%APPDATA%\com.gamelauncher.app`); state is managed inside `setup` |
+| `src-tauri/src/services/cache.rs` | Writes create the folder first (`write_file`) |
+| `src-tauri/src/services/launcher.rs` | Protocol links go through a new `shell_open` (no `cmd`); launch arguments are passed; working dir guarded |
+| `src-tauri/src/commands/mod.rs` | `scan_all_games` / `rescan_platform` are async (`spawn_blocking`); `rescan_platform` merges; `open_url` uses `shell_open` |
+| `src-tauri/src/scanners/steam.rs` | Reads `LastPlayed`; skips Steamworks Common Redistributables (228980) |
+| `src-tauri/src/scanners/epic.rs` | Launches via `com.epicgames.launcher://apps/<ns>%3A<item>%3A<app>?action=launch&silent=true`; skips DLC/add-ons |
+| `src-tauri/src/scanners/gog.rs` | Uses the registry's `exe` / `launchParam` when present (exe guessing kept as fallback) |
+| `src-tauri/src/tray.rs` | **New** — tray icon (Show / Quit), hide-on-close, `set_keep_in_tray` command |
+| `src-tauri/Cargo.toml` | Added `tray-icon` feature; removed unused `tokio`, `dirs`, `sysinfo` |
+
+### Bug Fixes
+| Issue | Fix |
+|---|---|
+| **Favorites / scan cache / store config never persisted** — state pointed at `%TEMP%\game-launcher`, which nothing created, and `fs::write` doesn't create folders. The cache save error was discarded, so the saved library was always empty; toggling a favorite failed (logged to console only) until a store toggle happened to create the folder. | Moved to the app data dir and made every write create its folder. Old data in `%TEMP%` is not migrated (none existed on the dev machine). |
+| **"Recently played" always empty, default sort a no-op** — every scanner set `last_played: None` | Steam's `LastPlayed` is parsed; the frontend also records launches from Cabinet (`cabinet_last_launched`), so Epic/GOG/local games count too |
+| **Custom-game launch arguments ignored** — stored in `launch_command`, but only `executable_path` was run | Arguments = what follows the exe in `launch_command`, passed verbatim (`raw_arg`). Works for games saved by earlier versions. |
+| **"Search the web" lost its query** — `cmd /C start` treats `&` as a command separator | `shell_open` uses `rundll32 url.dll,FileProtocolHandler`; Steam and Epic links go the same way |
+| **Epic games started from the exe**, skipping the launcher's login | Launch through the Epic launcher link |
+| **Window froze during a scan** — sync Tauri commands run on the main thread | Scans run on the blocking pool |
+| **`rescan_platform` wiped other stores from the cache** | Merges by id prefix |
+| **"Scan on startup" did nothing; startup scan replaced the saved library with "Scanning…"** | Setting respected (always scans if nothing is saved); startup refresh is quiet and keeps the list on screen |
+| **"Keep running in the tray" did nothing** | Implemented (`tray.rs`); the tray icon only appears while the setting is on |
+| **Controller mode was keyboard-only and showed hidden games** | Gamepad support (A/B/Y, d-pad / left stick with repeat); hidden games excluded |
+
+---
+
 ## Known Issues
 - **Launchers other than Steam/Epic/GOG are detected but not scanned** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar appear in Sources with install status, but no games are read from them yet.
 - **Games not on Steam get no artwork** — the name lookup can only find titles that also exist on Steam; everything else falls back to the store thumbnail or a gradient tile.
 - **Cover lookups are cached permanently** — if a game later appears on Steam it won't be re-looked-up. Clearing `cabinet_cover_lookup` from localStorage forces a retry.
 - **Sizes are recomputed each launch** — they're exact but not cached between sessions, so a large game is re-walked the first time you open it.
 - **Desktop folder builds fail** with file-lock errors — always build from `C:\Users\91623\code\GAMELAUCNHER`.
-- **Git remote contains a plaintext PAT** in `.git/config` (and `.env.local`) — should be rotated and replaced with a credential helper.
-- **`AppState.cache_dir` mismatch** — `lib.rs` setup creates `app_data_dir()` but the managed state still points at `%TEMP%\game-launcher`.
+- **Git remote contains a plaintext PAT** in `.git/config` (and `.env.local`) — should be revoked and replaced with a credential helper.
+- **GOG changes are untested** — no GOG install on the dev machine; registry value names (`exe`, `launchParam`) follow GOG's documented layout.
+- **Steam tools still appear as games** — only the redistributables package is filtered; apps like Wallpaper Engine can be hidden from the three-dot menu.
+- **Gamepad needs a first press** — WebView2 exposes controllers only after a button is pressed; controller mode is opened from the sidebar.
 
 ---
 
@@ -330,6 +363,7 @@ game-launcher/
 │   ├── src/
 │   │   ├── main.rs              # Entry point
 │   │   ├── lib.rs               # Tauri builder + state management
+│   │   ├── tray.rs              # Tray icon + "keep running in the tray"
 │   │   ├── models/
 │   │   │   ├── mod.rs           # GameEntry, GameSource, CoverSuggestion, DetectedStore
 │   │   │   └── store_config.rs  # StoreConfig (store_config.json)
@@ -341,8 +375,8 @@ game-launcher/
 │   │   ├── services/
 │   │   │   ├── mod.rs
 │   │   │   ├── aggregator.rs    # Combines scanners; enabled-store filtering
-│   │   │   ├── cache.rs         # Disk cache + favorites persistence
-│   │   │   └── launcher.rs      # Game launching logic
+│   │   │   ├── cache.rs         # Disk cache + favorites persistence (app data dir)
+│   │   │   └── launcher.rs      # Game launching + shell_open (links without cmd)
 │   │   └── commands/mod.rs      # Tauri commands
 │   ├── icons/                   # App icon set + per-store PNGs (generated)
 │   └── tauri.conf.json

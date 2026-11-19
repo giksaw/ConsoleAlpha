@@ -7,12 +7,13 @@ A unified desktop game launcher for Windows built with [Tauri](https://tauri.app
 - **Multi-store library** — Automatically detects and scans games from Steam, Epic Games, and GOG Galaxy
 - **Custom games** — Manually add executables for games not in a store library
 - **Grid & list views** — Switch between a visual grid and a detailed table view
-- **Search & sort** — Filter by name, sort by recently played, A-Z, or most played
-- **Favorites** — Mark games as favorites for quick access
-- **Playtime tracking** — Tracks how long you play each game
+- **Search & sort** — Filter by name, sort by recently played or A-Z
+- **Recently played** — Uses Steam's own last-played time, plus every launch made from Cabinet
+- **Favorites & hiding** — Mark favorites; hide games you don't want to see (always reversible)
+- **Custom cover art** — Automatic Steam artwork lookup by name, or pick your own image
 - **Game status** — Organize your library with Backlog / Playing / Finished states
-- **Controller mode** — Navigate and launch games with a gamepad (A/B/Y buttons)
-- **Settings** — Configure scan-on-startup, playtime tracking, tray behavior, and more
+- **Controller mode** — Navigate and launch games with a gamepad or keyboard (A = play, B = back, Y = favorite)
+- **Settings** — Scan on startup, keep running in the tray, hide removed games, and per-store toggles
 
 ## Tech Stack
 
@@ -86,15 +87,24 @@ Open http://localhost:5173 in your browser. Note that game scanning and launchin
 
 ## Store Detection
 
-Cabinet scans the following locations for installed games:
+Cabinet reads installed games from:
 
-| Store        | Default Path                                  |
-| ------------ | --------------------------------------------- |
-| Steam        | `C:\Program Files (x86)\Steam`                |
-| Epic Games   | `C:\Program Files\Epic Games`                 |
-| GOG Galaxy   | `C:\GOG Games`                                |
+| Store        | Source                                                         | Launched via                    |
+| ------------ | -------------------------------------------------------------- | ------------------------------- |
+| Steam        | Registry `SteamPath` → `libraryfolders.vdf` → `appmanifest_*.acf` | `steam://rungameid/<id>`       |
+| Epic Games   | `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests\*.item`   | `com.epicgames.launcher://` link |
+| GOG Galaxy   | Registry `HKLM\SOFTWARE\WOW6432Node\GOG.com\Games`             | The game's executable           |
 
-Additional launchers (Battle.net, Xbox, EA App, Ubisoft Connect, Heroic, Lutris) can be configured in Sources & Settings.
+Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar are
+detected (shown in Sources with install status) but their games are not scanned yet.
+
+## Where data is stored
+
+| Data                                   | Location                                  |
+| -------------------------------------- | ----------------------------------------- |
+| Library cache, favorites, store toggles | `%APPDATA%\com.gamelauncher.app\*.json`   |
+| Custom games, settings, statuses, hidden games, last launches | WebView `localStorage` (`cabinet_*` keys) |
+| Custom cover images                    | WebView IndexedDB (`cabinet` → `covers`)  |
 
 ## License
 
