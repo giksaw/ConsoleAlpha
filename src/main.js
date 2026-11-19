@@ -22,6 +22,7 @@ let settings = {
   keep_in_tray: false,
   hide_removed: false,
   show_stores_in_sidebar: true,
+  sgdb_key: "",   // SteamGridDB API key (optional) for artwork of non-Steam games
 };
 let storeConfig = {
   stores: { steam: true, epic: true, gog: true },
@@ -68,14 +69,20 @@ const STORE_CATALOG = [
   { id: "steam", name: "Steam", source: "Steam", supported: true },
   { id: "epic", name: "Epic Games", source: "Epic", supported: true },
   { id: "gog", name: "GOG Galaxy", source: "GOG", supported: true },
-  { id: "battlenet", name: "Battle.net", source: "BattleNet", supported: false },
-  { id: "ubisoft", name: "Ubisoft Connect", source: "Ubisoft", supported: false },
-  { id: "ea", name: "EA App", source: "EA", supported: false },
-  { id: "xbox", name: "Xbox", source: "Xbox", supported: false },
-  { id: "amazon", name: "Amazon Games", source: "Amazon", supported: false },
-  { id: "itch", name: "itch.io", source: "itch.io", supported: false },
-  { id: "rockstar", name: "Rockstar Games", source: "Rockstar", supported: false },
+  { id: "battlenet", name: "Battle.net", source: "BattleNet", supported: true },
+  { id: "ubisoft", name: "Ubisoft Connect", source: "Ubisoft", supported: true },
+  { id: "ea", name: "EA App", source: "EA", supported: true },
+  { id: "xbox", name: "Xbox", source: "Xbox", supported: true },
+  { id: "amazon", name: "Amazon Games", source: "Amazon", supported: true },
+  { id: "itch", name: "itch.io", source: "itch.io", supported: true },
+  { id: "rockstar", name: "Rockstar Games", source: "Rockstar", supported: true },
 ];
+
+// How to show where a game came from ("Battle.net", not the raw "BattleNet").
+function sourceName(game) {
+  const store = STORE_CATALOG.find((s) => s.source === game.source);
+  return store ? store.name : game.source;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function esc(s) {
@@ -210,26 +217,68 @@ document.addEventListener("error", (e) => {
   }
 }, true);
 
-// ── Cover lookup (Steam store search by name) ────────────────────────────────
+// ── Cover lookup (Steam store search, then SteamGridDB) ──────────────────────
 // Many Epic/GOG/custom titles are also sold on Steam, and Steam's 600×900
-// library art is far better than what those stores expose. We look the name up
-// once, cache the result, and quietly fill the grid in as answers arrive.
+// library art is far better than what those stores expose. Games that aren't on
+// Steam fall back to SteamGridDB when the user has added a (free) API key. We
+// look the name up once, cache the result, and quietly fill the grid in as
+// answers arrive. "No match" answers are retried after MISS_RETRY_MS, or right
+// away when the SteamGridDB key changes.
+const MISS_RETRY_MS = 14 * 86400000;
+const coverMissAt = new Map();   // id → when the lookup last found nothing
+
 function loadCoverLookup() {
   try {
     const raw = localStorage.getItem("cabinet_cover_lookup");
     if (raw) for (const [k, v] of Object.entries(JSON.parse(raw))) coverLookup.set(k, v);
+    const miss = localStorage.getItem("cabinet_cover_miss");
+    if (miss) for (const [k, v] of Object.entries(JSON.parse(miss))) coverMissAt.set(k, v);
   } catch { /* ignore */ }
 }
 function saveCoverLookup() {
   try {
     localStorage.setItem("cabinet_cover_lookup", JSON.stringify(Object.fromEntries(coverLookup)));
+    localStorage.setItem("cabinet_cover_miss", JSON.stringify(Object.fromEntries(coverMissAt)));
   } catch { /* ignore */ }
+}
+
+// Forget every "no match" so those games are looked up again (e.g. new key).
+function forgetCoverMisses() {
+  for (const [id, cover] of coverLookup) {
+    if (!cover) coverLookup.delete(id);
+  }
+  coverMissAt.clear();
+  lookupFailed.clear();
+  saveCoverLookup();
+}
+
+// Artwork candidates for a name: Steam first, then SteamGridDB if a key is set.
+// Returns { results, error } — error is set only when every source failed.
+async function searchArtwork(name) {
+  const results = [];
+  const errors = [];
+  try {
+    results.push(...(await invoke("search_steam_covers", { name }) || []));
+  } catch (e) { errors.push(String(e)); }
+  const apiKey = (settings.sgdb_key || "").trim();
+  if (apiKey) {
+    try {
+      results.push(...(await invoke("search_steamgriddb_covers", { name, apiKey }) || []));
+    } catch (e) { errors.push(String(e)); }
+  }
+  const seen = new Set();
+  const unique = results.filter((r) => r && r.cover && !seen.has(r.cover) && seen.add(r.cover));
+  return { results: unique, error: unique.length ? null : (errors[0] || null) };
 }
 
 function needsCoverLookup(game) {
   if (!isTauri) return false;
   if (coverOverrides.has(game.id)) return false;   // user chose the art
-  if (coverLookup.has(game.id)) return false;      // already answered
+  if (coverLookup.has(game.id)) {                  // already answered…
+    if (coverLookup.get(game.id)) return false;
+    const missAt = coverMissAt.get(game.id) || 0;  // …unless it was a stale miss
+    if (Date.now() - missAt < MISS_RETRY_MS) return false;
+  }
   if (lookupFailed.has(game.id)) return false;     // errored this session
   if (/^steam_/.test(game.id || "")) return false; // Steam art is already right
   // Custom games only get auto-art when the user didn't pick any themselves.
@@ -277,17 +326,32 @@ async function pumpCoverLookups() {
   while (lookupQueue.length) {
     const game = lookupQueue.shift();
     if (!needsCoverLookup(game)) continue;
+    const strict = game.source === "Custom";
     let cover = "";
     try {
       const results = await invoke("search_steam_covers", { name: game.name });
-      const best = pickBestMatch(game.name, results, game.source === "Custom");
+      const best = pickBestMatch(game.name, results, strict);
       cover = best ? best.cover : "";
     } catch {
       // Transient failure: skip for now, try again next launch.
       lookupFailed.add(game.id);
       continue;
     }
+    const apiKey = (settings.sgdb_key || "").trim();
+    if (!cover && apiKey) {
+      try {
+        const results = await invoke("search_steamgriddb_covers", { name: game.name, apiKey });
+        const best = pickBestMatch(game.name, results, strict);
+        cover = best ? best.cover : "";
+      } catch {
+        // Bad key or network trouble: don't record a miss, retry next launch.
+        lookupFailed.add(game.id);
+        continue;
+      }
+    }
     coverLookup.set(game.id, cover);
+    if (cover) coverMissAt.delete(game.id);
+    else coverMissAt.set(game.id, Date.now());
     saveCoverLookup();
     scheduleCoverRefresh();
   }
@@ -330,15 +394,45 @@ function observeSizeCells() {
   });
 }
 
+// Measured sizes are also saved between sessions, so a big game isn't walked
+// again every launch. A saved size is reused for SIZE_MAX_AGE_MS, and only
+// while the game's install folder is unchanged; older ones are shown right away
+// and re-measured in the background.
+const SIZE_MAX_AGE_MS = 7 * 86400000;
+const savedSizes = new Map();    // id → { b: bytes, p: install_path, t: measured at }
+
+function loadSavedSizes() {
+  try {
+    const raw = localStorage.getItem("cabinet_sizes");
+    if (raw) for (const [k, v] of Object.entries(JSON.parse(raw))) savedSizes.set(k, v);
+  } catch { /* ignore */ }
+}
+function persistSavedSizes() {
+  try { localStorage.setItem("cabinet_sizes", JSON.stringify(Object.fromEntries(savedSizes))); }
+  catch { /* ignore */ }
+}
+function savedSizeFor(game) {
+  const s = savedSizes.get(game.id);
+  return s && s.p === game.install_path && typeof s.b === "number" ? s : null;
+}
+
 function sizeLabel(game) {
   if (!isTauri || !game.install_path) return "—";
   const v = sizes.get(game.id);
-  return v === undefined ? "…" : formatSize(v);
+  if (typeof v === "number" || v === null) return formatSize(v);
+  const saved = savedSizeFor(game);
+  if (saved) return formatSize(saved.b);   // shown while a re-measure runs
+  return "…";
 }
 
 function requestSize(game) {
   if (!isTauri || !game.install_path) return;
   if (sizes.has(game.id) || sizeQueue.some((g) => g.id === game.id)) return;
+  const saved = savedSizeFor(game);
+  if (saved && Date.now() - saved.t < SIZE_MAX_AGE_MS) {
+    sizes.set(game.id, saved.b);
+    return;
+  }
   sizes.set(game.id, "pending");
   sizeQueue.push(game);
   pumpSizes();
@@ -350,10 +444,14 @@ async function pumpSizes() {
   while (sizeQueue.length) {
     const game = sizeQueue.shift();
     try {
-      sizes.set(game.id, await invoke("get_game_size", { path: game.install_path }));
+      const bytes = await invoke("get_game_size", { path: game.install_path });
+      sizes.set(game.id, bytes);
+      savedSizes.set(game.id, { b: bytes, p: game.install_path, t: Date.now() });
     } catch {
       sizes.set(game.id, null);
+      savedSizes.delete(game.id);
     }
+    persistSavedSizes();
     refreshSizeCells(game.id);
   }
   sizing = false;
@@ -580,7 +678,9 @@ async function scanGames({ quiet = false } = {}) {
     if (!quiet) toast("Tauri not available — running in browser mode");
     return;
   }
-  const showProgress = !quiet || allGames.length === 0;
+  // Only the library view shows the "Scanning…" placeholder; on the settings
+  // page it would wipe the form the user is looking at.
+  const showProgress = currentPage === "lib" && (!quiet || allGames.length === 0);
   if (showProgress) scrollEl.innerHTML = `<div class="empty">Scanning your game library…</div>`;
   try {
     const result = await invoke("scan_all_games");
@@ -720,7 +820,7 @@ function renderLibrary() {
           <b>${esc(g.name)}</b>
           <span class="dots" data-menu="${esc(g.id)}" role="button" tabindex="0" aria-label="Options for ${esc(g.name)}">&#8942;</span>
         </div>
-        <span>${esc(g.source)}${hiddenGames.has(g.id) ? " · hidden" : ""}</span>
+        <span>${esc(sourceName(g))}${hiddenGames.has(g.id) ? " · hidden" : ""}</span>
       </button>`).join("") + `</div>`;
   } else {
     h = `<table class="tbl"><thead><tr><th></th><th>Name</th><th>Store</th><th class="r">Size</th><th>Last played</th><th></th><th></th></tr></thead><tbody>`
@@ -728,7 +828,7 @@ function renderLibrary() {
         <tr data-id="${esc(g.id)}">
           <td>${renderThumb(g)}</td>
           <td>${esc(g.name)}</td>
-          <td>${esc(g.source)}</td>
+          <td>${esc(sourceName(g))}</td>
           <td class="r" data-size="${esc(g.id)}">${esc(sizeLabel(g))}</td>
           <td>${relativeTime(lastPlayed(g))}</td>
           <td class="r"><button class="btn" data-play="${esc(g.id)}" style="padding:5px 14px">Play</button></td>
@@ -818,20 +918,45 @@ function renderSettings() {
     ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
     ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Cabinet.", settings.keep_in_tray)}
     ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
+    <h2>Artwork</h2>
+    <div class="src"><div><b>SteamGridDB API key</b></div><span></span>
+      <label class="fld" style="grid-column:1/-1;margin-top:4px">Optional — finds cover art for games that aren't on Steam. The key is stored on this PC and only sent to SteamGridDB.
+        <div class="in"><input id="sgdb-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key" value="${esc(settings.sgdb_key || "")}"><button class="btn" id="sgdb-save">Save</button></div>
+      </label>
+      <span style="grid-column:1/-1;color:var(--mute);font-size:12px">Get a free key at steamgriddb.com → Preferences → API. <a href="#" id="sgdb-link">Open the page</a></span>
+    </div>
   </div>`;
 
   const rb = $("#rescan");
   if (rb) rb.onclick = () => scanGames();
+
+  const sgdbSave = $("#sgdb-save");
+  if (sgdbSave) sgdbSave.onclick = () => {
+    const key = ($("#sgdb-key")?.value || "").trim();
+    if (key === (settings.sgdb_key || "")) { toast("Key unchanged"); return; }
+    settings.sgdb_key = key;
+    saveSettings();
+    // Games that found nothing before may have art on SteamGridDB: look again.
+    forgetCoverMisses();
+    toast(key ? "SteamGridDB key saved — looking for missing artwork" : "SteamGridDB key removed");
+    renderAll();
+  };
+  const sgdbLink = $("#sgdb-link");
+  if (sgdbLink) sgdbLink.onclick = (e) => {
+    e.preventDefault();
+    openExternal("https://www.steamgriddb.com/profile/preferences/api");
+  };
 
   document.querySelectorAll("[data-store]").forEach((el) => {
     el.addEventListener("click", () => {
       const key = el.dataset.store;
       const current = storeConfig.stores[key] !== false;
       storeConfig.stores[key] = !current;
-      saveStoreConfig();
       renderSettings();
       renderRail();
       toast(current ? `${key} hidden` : `${key} enabled`);
+      // Save first so the scan reads the new config, then refresh the library.
+      saveStoreConfig().then(() => scanGames({ quiet: true }));
     });
   });
 
@@ -839,10 +964,10 @@ function renderSettings() {
     el.addEventListener("click", () => {
       const key = el.dataset.restore;
       storeConfig.stores[key] = true;
-      saveStoreConfig();
       renderSettings();
       renderRail();
       toast(`${key} re-enabled`);
+      saveStoreConfig().then(() => scanGames({ quiet: true }));
     });
   });
 }
@@ -864,7 +989,7 @@ function openPanel(game) {
   panelEl.innerHTML = `<button class="x" id="px" aria-label="Close">&times;</button>
     ${renderCover(game)}
     <h2>${esc(game.name)}</h2>
-    <p>${esc(game.source)}${game.description ? " — " + esc(game.description) : ""}${hidden ? " · hidden" : ""}</p>
+    <p>${esc(sourceName(game))}${game.description ? " — " + esc(game.description) : ""}${hidden ? " · hidden" : ""}</p>
     <div class="acts">
       <button class="btn" data-play="${esc(game.id)}">Play</button>
       <button class="btn o" id="fv">${isFav ? "Remove favorite" : "Favorite"}</button>
@@ -928,15 +1053,9 @@ async function suggestArtwork() {
     return;
   }
   box.innerHTML = `<span class="sug-msg">Searching for artwork…</span>`;
-  let results = [];
-  try {
-    results = await invoke("search_steam_covers", { name });
-  } catch {
-    box.innerHTML = `<span class="sug-msg">Artwork search failed — paste an image URL instead.</span>`;
-    return;
-  }
-  if (!results || !results.length) {
-    box.innerHTML = `<span class="sug-msg">No matching artwork found — paste an image URL instead.</span>`;
+  const { results, error } = await searchArtwork(name);
+  if (!results.length) {
+    box.innerHTML = `<span class="sug-msg">${artworkEmptyMessage(error)}</span>`;
     return;
   }
   box.innerHTML = results.map((r) => `
@@ -1128,6 +1247,18 @@ function searchCoverFor(game) {
 }
 
 // Offer Steam cover art suggestions for the game being edited.
+// What to say when an artwork search comes back empty.
+function artworkEmptyMessage(error) {
+  if (error && /api key/i.test(error)) {
+    return "SteamGridDB rejected your API key — check it in Sources &amp; settings.";
+  }
+  if (error) return "Artwork search failed — paste an image URL instead.";
+  if (!(settings.sgdb_key || "").trim()) {
+    return "No matching artwork on Steam. Add a free SteamGridDB key in Sources &amp; settings to search more games, or paste an image URL.";
+  }
+  return "No matching artwork found — paste an image URL instead.";
+}
+
 async function suggestCoverForCurrent() {
   if (!coverGame) return;
   const box = $("#cov-sug");
@@ -1137,15 +1268,9 @@ async function suggestCoverForCurrent() {
     return;
   }
   box.innerHTML = `<span class="sug-msg">Searching for artwork…</span>`;
-  let results = [];
-  try {
-    results = await invoke("search_steam_covers", { name: coverGame.name });
-  } catch {
-    box.innerHTML = `<span class="sug-msg">Artwork search failed — paste an image URL instead.</span>`;
-    return;
-  }
-  if (!results || !results.length) {
-    box.innerHTML = `<span class="sug-msg">No matching artwork found — paste an image URL instead.</span>`;
+  const { results, error } = await searchArtwork(coverGame.name);
+  if (!results.length) {
+    box.innerHTML = `<span class="sug-msg">${artworkEmptyMessage(error)}</span>`;
     return;
   }
   box.innerHTML = results.map((r) => `
@@ -1197,7 +1322,7 @@ function renderPad() {
   $("#prow").innerHTML = games.map((game, i) =>
     `<div class="it ${i === controllerIndex ? "f" : ""}">${renderCover(game)}</div>`
   ).join("");
-  $("#pinfo").innerHTML = `<h2>${esc(g.name)}</h2><p>${esc(g.source)} · last played ${relativeTime(lastPlayed(g)).toLowerCase()}</p>`;
+  $("#pinfo").innerHTML = `<h2>${esc(g.name)}</h2><p>${esc(sourceName(g))} · last played ${relativeTime(lastPlayed(g)).toLowerCase()}</p>`;
   $("#pc").textContent = (controllerIndex + 1) + " of " + games.length;
   const f = $("#prow .f");
   if (f) f.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
@@ -1259,6 +1384,37 @@ function pollGamepad(now) {
     }
   }
   padRaf = requestAnimationFrame(pollGamepad);
+}
+
+// While a controller is connected and the overlay is closed, a light watcher
+// (not a per-frame loop) lets Start (button 9) open controller mode.
+let startWatchTimer = 0;
+let startPrev = false;
+
+function watchStartButton() {
+  if (startWatchTimer) return;
+  startPrev = true;   // ignore a Start already held when watching begins
+  startWatchTimer = setInterval(() => {
+    const gp = firstGamepad();
+    const pressed = !!(gp && gp.buttons[9] && gp.buttons[9].pressed);
+    const justPressed = pressed && !startPrev;
+    startPrev = pressed;
+    // The overlay's own loop owns input while it's open; skip when hidden/in tray.
+    if (justPressed && !document.hidden && !padEl.classList.contains("on")) openPad();
+  }, 150);
+}
+
+function stopWatchingStartButton() {
+  clearInterval(startWatchTimer);
+  startWatchTimer = 0;
+}
+
+function setupGamepadWatcher() {
+  window.addEventListener("gamepadconnected", watchStartButton);
+  window.addEventListener("gamepaddisconnected", () => {
+    if (!firstGamepad()) stopWatchingStartButton();
+  });
+  if (firstGamepad()) watchStartButton();   // already exposed before we listened
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────────
@@ -1476,9 +1632,11 @@ async function init() {
   loadCustomGames();
   loadGameStatuses();
   loadLastLaunched();
+  loadSavedSizes();
   loadHiddenGames();
   loadCoverLookup();
   setupEventListeners();
+  setupGamepadWatcher();
   syncTraySetting();
   await loadCoverOverrides();
   await loadFavorites();
