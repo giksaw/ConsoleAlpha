@@ -13,6 +13,7 @@ let selectedGame = null;
 let currentPage = "lib"; // "lib" | "set"
 let controllerIndex = 0;
 let gameStatuses = {}; // game_id → "backlog" | "playing" | "finished"
+let lastLaunched = {}; // game_id → ISO time of the last launch from Cabinet
 let menuGame = null;   // game whose three-dot menu is open
 let coverGame = null;  // game whose cover dialog is open
 let coverPending = { value: null }; // staged cover (data URL) from a picked file
@@ -385,13 +386,22 @@ function getDisplayGames(filter = currentFilter) {
   return games;
 }
 
+// When a game was last played: the store's own record (Steam) or the last launch
+// from Cabinet, whichever is newer. Epic, GOG and local games only have the latter.
+function lastPlayed(game) {
+  const a = game.last_played ? Date.parse(game.last_played) : NaN;
+  const b = lastLaunched[game.id] ? Date.parse(lastLaunched[game.id]) : NaN;
+  const t = Math.max(isNaN(a) ? -Infinity : a, isNaN(b) ? -Infinity : b);
+  return t === -Infinity ? null : new Date(t).toISOString();
+}
+
 function matchGame(game, filter) {
   if (filter === "all") return true;
   if (filter === "fav") return favorites.has(game.id);
   if (filter === "recent") {
-    if (!game.last_played) return false;
-    const d = new Date(game.last_played);
-    const days = (Date.now() - d.getTime()) / 86400000;
+    const played = lastPlayed(game);
+    if (!played) return false;
+    const days = (Date.now() - Date.parse(played)) / 86400000;
     return days <= 7;
   }
   if (filter === "local") return game.source === "Custom";
@@ -407,9 +417,11 @@ function getFilteredGames() {
   }
   if (sortBy === "az") games.sort((a, b) => a.name.localeCompare(b.name));
   else if (sortBy === "recent") games.sort((a, b) => {
-    if (!a.last_played) return 1;
-    if (!b.last_played) return -1;
-    return new Date(b.last_played) - new Date(a.last_played);
+    const pa = lastPlayed(a), pb = lastPlayed(b);
+    if (!pa && !pb) return a.name.localeCompare(b.name);
+    if (!pa) return 1;
+    if (!pb) return -1;
+    return Date.parse(pb) - Date.parse(pa);
   });
   return games;
 }
@@ -443,6 +455,18 @@ function loadGameStatuses() {
 }
 function saveGameStatuses() {
   localStorage.setItem("cabinet_game_statuses", JSON.stringify(gameStatuses));
+}
+
+function loadLastLaunched() {
+  try {
+    const raw = localStorage.getItem("cabinet_last_launched");
+    if (raw) lastLaunched = JSON.parse(raw) || {};
+  } catch { /* ignore */ }
+}
+function recordLaunch(id) {
+  lastLaunched[id] = new Date().toISOString();
+  try { localStorage.setItem("cabinet_last_launched", JSON.stringify(lastLaunched)); }
+  catch { /* ignore */ }
 }
 
 function loadHiddenGames() {
@@ -549,27 +573,29 @@ async function saveStoreConfig() {
   }
 }
 
-async function scanGames() {
+// Scan every enabled store. With { quiet: true } (startup refresh) the saved
+// library stays on screen while the scan runs and no toast is shown.
+async function scanGames({ quiet = false } = {}) {
   if (!isTauri) {
-    toast("Tauri not available — running in browser mode");
+    if (!quiet) toast("Tauri not available — running in browser mode");
     return;
   }
-  scrollEl.innerHTML = `<div class="empty">Scanning your game library…</div>`;
-  sizes.clear();
+  const showProgress = !quiet || allGames.length === 0;
+  if (showProgress) scrollEl.innerHTML = `<div class="empty">Scanning your game library…</div>`;
   try {
     const result = await invoke("scan_all_games");
-    console.log("[SCAN] Raw result:", result);
-    if (result && Array.isArray(result)) {
-      allGames = result;
-      console.log("[SCAN] allGames set to", allGames.length, "games");
-    } else {
-      allGames = [];
-    }
+    allGames = Array.isArray(result) ? result : [];
+    console.log("[SCAN] allGames set to", allGames.length, "games");
+    sizes.clear();
     renderAll();
-    toast(`Found ${allGames.length} games`);
+    if (!quiet) toast(`Found ${allGames.length} games`);
   } catch (e) {
     console.error("Scan failed:", e);
-    scrollEl.innerHTML = `<div class="empty">Scan failed: ${e.message || e}. Check that Steam is installed.</div>`;
+    if (showProgress) {
+      scrollEl.innerHTML = `<div class="empty">Scan failed: ${esc(e.message || e)}. Check that Steam is installed.</div>`;
+    } else {
+      toast("Library refresh failed");
+    }
   }
 }
 
@@ -580,7 +606,9 @@ async function launchGame(game) {
   }
   try {
     await invoke("launch_game", { game });
+    recordLaunch(game.id);
     toast("Launching " + game.name);
+    renderAll();
   } catch (e) {
     console.error("Launch failed:", e);
     toast("Failed to launch: " + e);
@@ -601,6 +629,14 @@ async function toggleFavorite(gameId) {
   } catch (e) {
     console.error("Toggle favorite failed:", e);
   }
+}
+
+// The tray behavior lives in the backend (it intercepts the window close), but
+// the setting is stored here, so push it on startup and whenever it changes.
+async function syncTraySetting() {
+  if (!isTauri) return;
+  try { await invoke("set_keep_in_tray", { enabled: !!settings.keep_in_tray }); }
+  catch (e) { console.error("Failed to update tray setting:", e); }
 }
 
 async function openExternal(url) {
@@ -694,7 +730,7 @@ function renderLibrary() {
           <td>${esc(g.name)}</td>
           <td>${esc(g.source)}</td>
           <td class="r" data-size="${esc(g.id)}">${esc(sizeLabel(g))}</td>
-          <td>${relativeTime(g.last_played)}</td>
+          <td>${relativeTime(lastPlayed(g))}</td>
           <td class="r"><button class="btn" data-play="${esc(g.id)}" style="padding:5px 14px">Play</button></td>
           <td class="r"><button class="dots-inline" data-menu="${esc(g.id)}" aria-label="Options for ${esc(g.name)}">&#8942;</button></td>
         </tr>`).join("") + `</tbody></table>`;
@@ -841,7 +877,7 @@ function openPanel(game) {
         <button class="${status === "playing" ? "on" : ""}" data-st="playing">Playing</button>
         <button class="${status === "finished" ? "on" : ""}" data-st="finished">Finished</button>
       </div></dd>
-      <dt>Last played</dt><dd>${relativeTime(game.last_played)}</dd>
+      <dt>Last played</dt><dd>${relativeTime(lastPlayed(game))}</dd>
       <dt>Install size</dt><dd data-size="${esc(game.id)}">${esc(sizeLabel(game))}</dd>
       <dt>Location</dt><dd style="word-break:break-all">${esc(loc)}</dd>
     </dl>`;
@@ -1120,29 +1156,109 @@ async function suggestCoverForCurrent() {
 }
 
 // ── Controller mode ──────────────────────────────────────────────────────────
+// Games in controller mode: everything except games the user has hidden.
+function padGames() {
+  return getDisplayGames("all");
+}
+
 function openPad() {
-  const games = baseGames();
+  const games = padGames();
   if (!games.length) { toast("No games to display"); return; }
   controllerIndex = 0;
   padEl.classList.add("on");
   renderPad();
+  startGamepadLoop();
 }
 
 function closePad() {
   padEl.classList.remove("on");
+  stopGamepadLoop();
+}
+
+function padMove(delta) {
+  const n = padGames().length;
+  const next = Math.max(0, Math.min(n - 1, controllerIndex + delta));
+  if (next !== controllerIndex) { controllerIndex = next; renderPad(); }
+}
+function padPlay() {
+  const g = padGames()[controllerIndex];
+  if (g) launchGame(g);
+}
+function padFavorite() {
+  const g = padGames()[controllerIndex];
+  if (g) toggleFavorite(g.id).then(renderPad);
 }
 
 function renderPad() {
-  const games = baseGames();
+  const games = padGames();
   if (!games.length) { closePad(); return; }
+  controllerIndex = Math.min(controllerIndex, games.length - 1);
   const g = games[controllerIndex];
   $("#prow").innerHTML = games.map((game, i) =>
     `<div class="it ${i === controllerIndex ? "f" : ""}">${renderCover(game)}</div>`
   ).join("");
-  $("#pinfo").innerHTML = `<h2>${esc(g.name)}</h2><p>${esc(g.source)} · last played ${relativeTime(g.last_played).toLowerCase()}</p>`;
+  $("#pinfo").innerHTML = `<h2>${esc(g.name)}</h2><p>${esc(g.source)} · last played ${relativeTime(lastPlayed(g)).toLowerCase()}</p>`;
   $("#pc").textContent = (controllerIndex + 1) + " of " + games.length;
   const f = $("#prow .f");
   if (f) f.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+}
+
+// ── Gamepad (controller mode) ────────────────────────────────────────────────
+// Standard mapping: 0 = A (play), 1 = B (back), 3 = Y (favorite),
+// 14/15 = d-pad left/right, axis 0 = left stick. Polled only while the overlay is
+// open. Note: WebView2/Chromium hides gamepads until a button is pressed after
+// the page loads, so the very first press may only "wake" the controller.
+let padRaf = 0;
+let padPrev = [];       // button states from the previous frame (edge detection)
+let padHeldDir = 0;     // -1 / 0 / 1 direction currently held
+let padRepeatAt = 0;    // when a held direction may step again
+
+function firstGamepad() {
+  if (!navigator.getGamepads) return null;
+  return [...navigator.getGamepads()].find((g) => g && g.connected) || null;
+}
+
+function startGamepadLoop() {
+  if (padRaf) return;
+  // Treat buttons already held when the overlay opens as "not new".
+  const gp = firstGamepad();
+  padPrev = gp ? gp.buttons.map((b) => b.pressed) : [];
+  padHeldDir = 0;
+  padRaf = requestAnimationFrame(pollGamepad);
+}
+
+function stopGamepadLoop() {
+  if (padRaf) cancelAnimationFrame(padRaf);
+  padRaf = 0;
+  padPrev = [];
+  padHeldDir = 0;
+}
+
+function pollGamepad(now) {
+  padRaf = 0;
+  if (!padEl.classList.contains("on")) return;
+  const gp = firstGamepad();
+  if (gp) {
+    const pressed = gp.buttons.map((b) => b.pressed);
+    const justPressed = (i) => pressed[i] && !padPrev[i];
+    padPrev = pressed;
+
+    if (justPressed(1)) { closePad(); return; }
+    if (justPressed(0)) padPlay();
+    else if (justPressed(3)) padFavorite();
+
+    // Left/right from the d-pad or stick; repeats while held, like a key.
+    const x = gp.axes[0] || 0;
+    const dir = (pressed[15] || x > 0.5) ? 1 : (pressed[14] || x < -0.5) ? -1 : 0;
+    if (dir !== padHeldDir) {
+      padHeldDir = dir;
+      if (dir) { padMove(dir); padRepeatAt = now + 400; }
+    } else if (dir && now >= padRepeatAt) {
+      padMove(dir);
+      padRepeatAt = now + 120;
+    }
+  }
+  padRaf = requestAnimationFrame(pollGamepad);
 }
 
 // ── Toast ────────────────────────────────────────────────────────────────────
@@ -1271,6 +1387,7 @@ function setupEventListeners() {
       if (!key) return;
       settings[key] = !(tg.getAttribute("aria-pressed") === "true");
       saveSettings();
+      if (key === "keep_in_tray") syncTraySetting();
       renderAll();
       return;
     }
@@ -1335,18 +1452,12 @@ function setupEventListeners() {
   // Keyboard
   document.addEventListener("keydown", (e) => {
     if (padEl.classList.contains("on")) {
-      const games = baseGames();
-      if (e.key === "ArrowRight") { controllerIndex = Math.min(games.length - 1, controllerIndex + 1); renderPad(); }
-      else if (e.key === "ArrowLeft") { controllerIndex = Math.max(0, controllerIndex - 1); renderPad(); }
-      else if (e.key === "Enter" || e.key.toLowerCase() === "a") {
-        const g = games[controllerIndex];
-        if (g) launchGame(g);
-      }
-      else if (e.key === "y") {
-        const g = games[controllerIndex];
-        if (g) { toggleFavorite(g.id); renderPad(); }
-      }
-      else if (e.key === "Escape" || e.key.toLowerCase() === "b") { closePad(); }
+      const key = e.key.toLowerCase();
+      if (e.key === "ArrowRight") padMove(1);
+      else if (e.key === "ArrowLeft") padMove(-1);
+      else if (e.key === "Enter" || key === "a") padPlay();
+      else if (key === "y") padFavorite();
+      else if (e.key === "Escape" || key === "b") closePad();
       e.preventDefault();
     } else if (e.key === "Escape") {
       if (menuEl.classList.contains("on")) { closeMenu(); return; }
@@ -1364,16 +1475,22 @@ async function init() {
   loadSettings();
   loadCustomGames();
   loadGameStatuses();
+  loadLastLaunched();
   loadHiddenGames();
   loadCoverLookup();
   setupEventListeners();
+  syncTraySetting();
   await loadCoverOverrides();
   await loadFavorites();
   await loadCachedGames();
   await loadStoreConfig();
   await loadDetectedStores();
   renderAll();
-  if (isTauri) await scanGames();
+  // Show the saved library first; refresh it in the background if enabled.
+  // With nothing saved yet there is nothing to show, so always scan then.
+  if (isTauri && (settings.scan_on_startup || allGames.length === 0)) {
+    await scanGames({ quiet: true });
+  }
 }
 
 init();
