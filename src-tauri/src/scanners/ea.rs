@@ -83,7 +83,8 @@ fn parse_installer_data(xml: &str) -> InstallerData {
         None => p,
     });
     InstallerData {
-        title: xml_text(xml, "gameTitle")
+        title: english_title(xml)
+            .or_else(|| xml_text(xml, "gameTitle"))
             .map(|t| t.replace(['™', '®'], "").trim().to_string())
             .filter(|t| !t.is_empty()),
         content_id: xml_text(xml, "contentID"),
@@ -91,9 +92,25 @@ fn parse_installer_data(xml: &str) -> InstallerData {
     }
 }
 
+/// The `<gameTitle locale="en_US">` entry; the list is often not English-first.
+fn english_title(xml: &str) -> Option<String> {
+    let marker = "locale=\"en_US\"";
+    let at = xml.find(marker)?;
+    let body = &xml[at + marker.len()..];
+    let start = body.find('>')? + 1;
+    let end = body.find("</gameTitle>")?;
+    (start <= end).then(|| body[start..end].trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefers_english_title() {
+        let xml = r#"<gameTitles><gameTitle locale="de_DE">Die Sims 4</gameTitle><gameTitle locale="en_US">The Sims 4</gameTitle></gameTitles>"#;
+        assert_eq!(parse_installer_data(xml).title.as_deref(), Some("The Sims 4"));
+    }
 
     #[test]
     fn parses_installer_data() {

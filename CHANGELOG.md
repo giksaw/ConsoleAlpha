@@ -359,7 +359,9 @@ Open DevTools (F12) → Console to see:
 
 ### Frontend Changes
 - **All 10 launchers are scanned**; Sources shows real game counts for each, and store names display properly ("Battle.net", not "BattleNet").
-- **Artwork for non-Steam games:** optional SteamGridDB API key under *Sources & settings → Artwork*. Automatic lookups try Steam first, then SteamGridDB; both *Find artwork* buttons show results from both. Saving a key re-looks-up every game that previously found nothing.
+- **Artwork for non-Steam games:** optional SteamGridDB API key under *Sources & settings → Artwork*. Automatic lookups take an exact Steam match first, then SteamGridDB, and only then Steam's loose top hit (Steam's search is fuzzy, so for a non-Steam game that hit is often a different game). Both *Find artwork* buttons show results from both. Saving a key re-checks every automatic cover once; covers you picked yourself are untouched.
+- **Nested executables start from their own folder** (as a double-click would), not the install root — needed for exes like EA's `Game\Launcher\x.exe`.
+- **EA titles prefer the `en_US` name** from `installerdata.xml`.
 - **"No match" lookups retry after 14 days** instead of being cached forever (`cabinet_cover_miss`).
 - **Install sizes are saved** (`cabinet_sizes`) and reused for 7 days while the install folder is unchanged; an older size is shown immediately while it's re-measured.
 - **Start on a gamepad opens controller mode** (watched only while a controller is connected and the window is visible).
@@ -368,12 +370,15 @@ Open DevTools (F12) → Console to see:
 ### Verification
 - 14 unit tests cover the parsers (uninstall strings, `installerdata.xml`, `MicrosoftGame.config`, `.GamingRoot`, itch receipts/manifests, path de-duplication).
 - A full scan on the dev machine still returns exactly its 3 real games. Leftover launcher data there — EA registry keys, an EA-published game in a Steam folder (*It Takes Two*), Battle.net agent data without the client, an empty `XboxGames` folder — produced no false entries.
+- SteamGridDB routes were confirmed to exist (401 without a key), but no response has been parsed with a real key yet.
 - **Not tested against real installs:** none of the seven new launchers has games on the dev machine.
 
 ---
 
 ## Known Issues
 - **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
+- **SteamGridDB response parsing is untested with a real key** — the field names (`data[].id/name/url`) follow the API docs.
+- **Xbox scan probes drives C:–Z:** — a disconnected mapped network drive can make that check slow (the scan runs in the background, so the window stays responsive).
 - **itch.io: only the default install folder** (`%APPDATA%\itch\apps`) is scanned; extra install locations set in the itch app are not.
 - **EA, Rockstar, Battle.net, itch.io launch through the game's exe** (which hands off to its launcher); if a title's exe is guessed wrong, set it right by adding it as a local game.
 - **Without a SteamGridDB key, games not on Steam get no artwork** — they fall back to the store thumbnail or a gradient tile.

@@ -86,16 +86,18 @@ fn append_args(cmd: &mut Command, args: &str) {
     cmd.args(args.split_whitespace());
 }
 
-/// Run from the install folder when it exists, else from the executable's folder.
+/// Run from the executable's own folder, as double-clicking it would — games
+/// often load files relative to themselves, and the exe may sit deep inside the
+/// install folder (e.g. `Game\Launcher\x.exe`). Fall back to the install folder.
 fn working_dir(game: &GameEntry) -> Option<PathBuf> {
-    let install = Path::new(&game.install_path);
-    if !game.install_path.trim().is_empty() && install.is_dir() {
-        return Some(install.to_path_buf());
-    }
-    Path::new(&game.executable_path)
+    let exe_dir = Path::new(&game.executable_path)
         .parent()
-        .filter(|p| p.is_dir())
-        .map(Path::to_path_buf)
+        .filter(|p| !p.as_os_str().is_empty() && p.is_dir());
+    if let Some(dir) = exe_dir {
+        return Some(dir.to_path_buf());
+    }
+    let install = Path::new(&game.install_path);
+    (!game.install_path.trim().is_empty() && install.is_dir()).then(|| install.to_path_buf())
 }
 
 /// Hand a URL or protocol link to the OS so the registered handler opens it.

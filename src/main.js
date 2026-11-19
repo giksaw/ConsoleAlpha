@@ -242,11 +242,12 @@ function saveCoverLookup() {
   } catch { /* ignore */ }
 }
 
-// Forget every "no match" so those games are looked up again (e.g. new key).
-function forgetCoverMisses() {
-  for (const [id, cover] of coverLookup) {
-    if (!cover) coverLookup.delete(id);
-  }
+// Forget every automatic cover so all games are looked up again (e.g. after
+// adding a SteamGridDB key). This also replaces Steam's loose guesses from
+// earlier lookups; exact Steam matches are simply found again. Covers the user
+// picked themselves live in coverOverrides and are untouched.
+function forgetAutoCovers() {
+  coverLookup.clear();
   coverMissAt.clear();
   lookupFailed.clear();
   saveCoverLookup();
@@ -326,12 +327,17 @@ async function pumpCoverLookups() {
   while (lookupQueue.length) {
     const game = lookupQueue.shift();
     if (!needsCoverLookup(game)) continue;
-    const strict = game.source === "Custom";
+    // Order: an exact/prefix Steam match, then SteamGridDB (if a key is set),
+    // and only then Steam's loose top hit. Steam's search is fuzzy, so for a
+    // game that isn't on Steam the loose hit is often a different game.
+    // Custom games never take a loose hit.
+    const allowLoose = game.source !== "Custom";
     let cover = "";
+    let steamResults = [];
     try {
-      const results = await invoke("search_steam_covers", { name: game.name });
-      const best = pickBestMatch(game.name, results, strict);
-      cover = best ? best.cover : "";
+      steamResults = await invoke("search_steam_covers", { name: game.name }) || [];
+      const exact = pickBestMatch(game.name, steamResults, true);
+      cover = exact ? exact.cover : "";
     } catch {
       // Transient failure: skip for now, try again next launch.
       lookupFailed.add(game.id);
@@ -341,7 +347,7 @@ async function pumpCoverLookups() {
     if (!cover && apiKey) {
       try {
         const results = await invoke("search_steamgriddb_covers", { name: game.name, apiKey });
-        const best = pickBestMatch(game.name, results, strict);
+        const best = pickBestMatch(game.name, results, !allowLoose);
         cover = best ? best.cover : "";
       } catch {
         // Bad key or network trouble: don't record a miss, retry next launch.
@@ -349,6 +355,7 @@ async function pumpCoverLookups() {
         continue;
       }
     }
+    if (!cover && allowLoose && steamResults.length) cover = steamResults[0].cover;
     coverLookup.set(game.id, cover);
     if (cover) coverMissAt.delete(game.id);
     else coverMissAt.set(game.id, Date.now());
@@ -936,9 +943,9 @@ function renderSettings() {
     if (key === (settings.sgdb_key || "")) { toast("Key unchanged"); return; }
     settings.sgdb_key = key;
     saveSettings();
-    // Games that found nothing before may have art on SteamGridDB: look again.
-    forgetCoverMisses();
-    toast(key ? "SteamGridDB key saved — looking for missing artwork" : "SteamGridDB key removed");
+    // Re-check every automatic cover: SteamGridDB may beat a miss or a loose Steam guess.
+    forgetAutoCovers();
+    toast(key ? "SteamGridDB key saved — re-checking artwork" : "SteamGridDB key removed");
     renderAll();
   };
   const sgdbLink = $("#sgdb-link");
