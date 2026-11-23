@@ -131,7 +131,7 @@ store's own art. For games that aren't on Steam, add a free
 
 | Data                                   | Location                                  |
 | -------------------------------------- | ----------------------------------------- |
-| Library cache, favorites, store toggles | `%APPDATA%\com.gamelauncher.app\*.json`   |
+| Library cache, favorites, store toggles | `%APPDATA%\com.giksaw.gamecabinet\*.json` |
 | Custom games, settings (incl. SteamGridDB key), statuses, hidden games, last launches, cover lookups, install sizes | WebView `localStorage` (`cabinet_*` keys) |
 | Custom cover images                    | WebView IndexedDB (`cabinet` → `covers`)  |
 

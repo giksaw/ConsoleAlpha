@@ -12,7 +12,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             // Library cache, favorites and store config live in the per-user app
-            // data dir (%APPDATA%\com.gamelauncher.app). It used to be %TEMP%,
+            // data dir (%APPDATA%\com.giksaw.gamecabinet). It used to be %TEMP%,
             // which was never created and is routinely cleaned out.
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
