@@ -83,7 +83,7 @@ You can also run the frontend without the Tauri backend:
 npm run dev
 ```
 
-Open http://localhost:5173 in your browser. Note that game scanning and launching require the Tauri backend.
+Open http://localhost:1420 in your browser. Note that game scanning and launching require the Tauri backend.
 
 ## Store Detection
 
