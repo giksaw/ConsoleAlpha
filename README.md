@@ -75,6 +75,21 @@ npm run tauri build
 
 This creates a production build in `src-tauri/target/release/bundle/`.
 
+### Microsoft Store package (MSIX)
+
+```bash
+npm run package:msix              # build the app, then package it
+npm run package:msix -- --no-build  # package the exe that's already built
+```
+
+Needs the free [Windows SDK](https://developer.microsoft.com/windows/downloads/windows-sdk/) (for `makeappx.exe`). The package lands in `src-tauri/target/msix/` and is left unsigned: the Store signs it on submission.
+
+- **Identity**: before uploading, copy the values from Partner Center → *Product identity* into `msix/identity.json`.
+- **Test locally** (Settings → System → For developers → Developer Mode on):
+  `Add-AppxPackage -Register src-tauri\target\msix\stage\AppxManifest.xml`. Remove it with
+  `Get-AppxPackage *GameLauncher* | Remove-AppxPackage`.
+- The manifest asks for two restricted capabilities you justify at submission: `runFullTrust` (it launches other programs) and `unvirtualizedResources` (games started from it must save to the real AppData/registry, not inside the launcher's package).
+
 ### Frontend-only (Browser Mode)
 
 You can also run the frontend without the Tauri backend:
