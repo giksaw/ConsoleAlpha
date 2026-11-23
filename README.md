@@ -1,6 +1,19 @@
 # Game Console Alpha
 
-A unified desktop game launcher for Windows built with [Tauri](https://tauri.app/). Scan your game libraries from Steam, Epic Games, and GOG Galaxy, add custom executables, and launch everything from one clean interface.
+One library for all your PC games. Game Console Alpha finds the games you already have installed from Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar Games, lets you add any other game by hand, and launches everything from one clean interface — with a mouse, keyboard or controller.
+
+## Download
+
+**Windows 10 (version 2004 or later) and Windows 11, 64-bit.**
+
+- **GitHub:** get `GameConsoleAlpha-<version>-x64-setup.exe` from the [latest release](https://github.com/giksaw/ConsoleAlpha/releases/latest) and run it. It installs for your user account only and doesn't need administrator rights.
+- **Microsoft Store:** coming soon. The Store version updates itself automatically.
+
+The installer isn't code-signed yet, so Windows SmartScreen may show *"Windows protected your PC"*. Click **More info → Run anyway**. The GitHub version doesn't update itself: download the new installer from Releases to update.
+
+Install either the GitHub version or the Store version, not both. They share the same settings and library data, and both appear in Start as "Game Console Alpha".
+
+Game Console Alpha doesn't sell, download or install games, and it doesn't collect any data. See the [privacy policy](https://giksaw.github.io/ConsoleAlpha/privacy-policy.html).
 
 ## Features
 
@@ -73,7 +86,7 @@ This starts the Vite dev server and launches the Tauri desktop app with hot-relo
 npm run tauri build
 ```
 
-This creates a production build in `src-tauri/target/release/bundle/`.
+This builds the installer (NSIS) at `src-tauri/target/release/bundle/nsis/Game Console Alpha_<version>_x64-setup.exe`. This is the file published on GitHub Releases, renamed to `GameConsoleAlpha-<version>-x64-setup.exe`.
 
 ### Microsoft Store package (MSIX)
 
@@ -137,4 +150,4 @@ store's own art. For games that aren't on Steam, add a free
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Privacy policy: [docs/privacy-policy.html](docs/privacy-policy.html), published with GitHub Pages at https://giksaw.github.io/ConsoleAlpha/privacy-policy.html once the repo is public.
+MIT — see [LICENSE](LICENSE). Privacy policy: [docs/privacy-policy.html](docs/privacy-policy.html), published at https://giksaw.github.io/ConsoleAlpha/privacy-policy.html.
