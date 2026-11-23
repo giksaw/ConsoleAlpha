@@ -43,11 +43,13 @@ All your installed PC games from Steam, Epic, GOG, Xbox and more in one library,
 ### Search terms (max 7)
 game launcher
 game library
-steam
-epic games
-gog
-controller
 pc games
+game organizer
+controller
+gamepad
+launcher
+
+(Store names like Steam or Epic are left out on purpose: they're other companies' trademarks, and the description already mentions them, so search still finds the app.)
 
 ### Screenshots
 At least 1, 1366×768 or larger (1920×1080 recommended), PNG. Suggested set:
