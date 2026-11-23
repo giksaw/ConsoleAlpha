@@ -121,11 +121,13 @@ Upload `src-tauri/target/msix/GiksawInteractive.GameCabinet_0.1.0.0_x64.msix`
 
 ## Submission options → Restricted capabilities justification
 
-**runFullTrust**
-Game Console Alpha is a Win32 desktop app (Rust + WebView2) packaged as MSIX. runFullTrust is required for any full-trust desktop app. The app's job is to start the games the user has installed: it starts game executables directly, and starts store-managed games through the store's own launcher (for example steam://, com.epicgames.launcher://, uplay://, amazon-games:// and shell:AppsFolder for Xbox games). This can't be done from a sandboxed app.
+Each Partner Center box takes at most 500 characters.
 
-**unvirtualizedResources**
-The app starts the user's games and their launchers as child processes. With file system and registry virtualization on, every write those programs make to %APPDATA%, %LOCALAPPDATA% or HKEY_CURRENT_USER (save games, settings, launcher login and update state) would be redirected into Game Console Alpha's private package folder. The games and launchers would then lose saves and settings, behave differently from when they are started normally, and that data would be deleted when Game Console Alpha is uninstalled. Turning virtualization off makes games behave exactly as if the user had started them themselves. Game Console Alpha itself writes only to its own com.giksaw.gameconsolealpha folders.
+**runFullTrust** (478 characters)
+Game Console Alpha is a Win32 desktop app (Rust + WebView2) packaged as MSIX, so it needs runFullTrust to run. It is a launcher for PC games the user already owns: it starts game executables directly and starts store games via their launcher protocols (steam://, com.epicgames.launcher://, uplay://, shell:AppsFolder for Xbox games). It reads launchers' local install records to find installed games. It doesn't download, install or modify games and never runs as administrator.
+
+**unvirtualizedResources** (495 characters)
+The app starts the user's games and launchers as child processes. With write virtualization on, their writes to %APPDATA%, %LOCALAPPDATA% and HKCU (saves, settings, launcher logins) would be redirected into our package folder, so games would lose existing saves and settings, and new progress would be deleted when our app is uninstalled. Disabling virtualization makes games behave as if the user started them directly. The app itself writes only to its own com.giksaw.gameconsolealpha folders.
 
 ---
 
