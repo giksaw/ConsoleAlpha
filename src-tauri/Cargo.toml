@@ -1,7 +1,7 @@
 [package]
 name = "game-launcher"
 version = "0.1.0"
-description = "Game Cabinet: one library for all your PC games"
+description = "Game Console Alpha: one library for all your PC games"
 authors = ["Gladson Mathew"]
 edition = "2021"
 

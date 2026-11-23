@@ -16,12 +16,12 @@ pub struct KeepInTray(pub AtomicBool);
 
 /// Create the tray icon (hidden until the setting is turned on).
 pub fn setup(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show Game Cabinet", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show Game Console Alpha", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Game Cabinet")
+        .tooltip("Game Console Alpha")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

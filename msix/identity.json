@@ -1,8 +1,8 @@
 {
-  "_comment": "Values from Partner Center > Game Cabinet > Product identity. Do not change.",
+  "_comment": "Values from Partner Center > app > Product identity. Do not change.",
   "identityName": "GiksawInteractive.GameCabinet",
   "publisher": "CN=A5F227A5-B343-4106-B543-E09F42A768B3",
   "publisherDisplayName": "Giksaw Interactive",
-  "displayName": "Game Cabinet",
+  "displayName": "Game Console Alpha",
   "description": "One library for all your PC games: Steam, Epic, GOG, Xbox, Battle.net and more."
 }

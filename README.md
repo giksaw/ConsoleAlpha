@@ -1,4 +1,4 @@
-# Game Cabinet
+# Game Console Alpha
 
 A unified desktop game launcher for Windows built with [Tauri](https://tauri.app/). Scan your game libraries from Steam, Epic Games, and GOG Galaxy, add custom executables, and launch everything from one clean interface.
 
@@ -8,7 +8,7 @@ A unified desktop game launcher for Windows built with [Tauri](https://tauri.app
 - **Custom games** — Manually add executables for games not in a store library
 - **Grid & list views** — Switch between a visual grid and a detailed table view
 - **Search & sort** — Filter by name, sort by recently played or A-Z
-- **Recently played** — Uses Steam's own last-played time, plus every launch made from Game Cabinet
+- **Recently played** — Uses Steam's own last-played time, plus every launch made from Game Console Alpha
 - **Favorites & hiding** — Mark favorites; hide games you don't want to see (always reversible)
 - **Custom cover art** — Automatic Steam artwork lookup by name, or pick your own image
 - **Game status** — Organize your library with Backlog / Playing / Finished states
@@ -102,7 +102,7 @@ Open http://localhost:1420 in your browser. Note that game scanning and launchin
 
 ## Store Detection
 
-Game Cabinet reads installed games from:
+Game Console Alpha reads installed games from:
 
 | Store           | Source                                                              | Launched via                       |
 | --------------- | ------------------------------------------------------------------- | ---------------------------------- |
@@ -131,7 +131,7 @@ store's own art. For games that aren't on Steam, add a free
 
 | Data                                   | Location                                  |
 | -------------------------------------- | ----------------------------------------- |
-| Library cache, favorites, store toggles | `%APPDATA%\com.giksaw.gamecabinet\*.json` |
+| Library cache, favorites, store toggles | `%APPDATA%\com.giksaw.gameconsolealpha\*.json` |
 | Custom games, settings (incl. SteamGridDB key), statuses, hidden games, last launches, cover lookups, install sizes | WebView `localStorage` (`cabinet_*` keys) |
 | Custom cover images                    | WebView IndexedDB (`cabinet` → `covers`)  |
 

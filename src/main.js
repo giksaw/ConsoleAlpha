@@ -17,7 +17,7 @@ let selectedGame = null;
 let currentPage = "lib"; // "lib" | "set"
 let controllerIndex = 0;
 let gameStatuses = {}; // game_id → "backlog" | "playing" | "finished"
-let lastLaunched = {}; // game_id → ISO time of the last launch from Game Cabinet
+let lastLaunched = {}; // game_id → ISO time of the last launch from Game Console Alpha
 let menuGame = null;   // game whose three-dot menu is open
 let coverGame = null;  // game whose cover dialog is open
 let coverPending = { value: null }; // staged cover (data URL) from a picked file
@@ -498,7 +498,7 @@ function getDisplayGames(filter = currentFilter) {
 }
 
 // When a game was last played: the store's own record (Steam) or the last launch
-// from Cabinet, whichever is newer. Epic, GOG and local games only have the latter.
+// from Game Console Alpha, whichever is newer. Epic, GOG and local games only have the latter.
 function lastPlayed(game) {
   const a = game.last_played ? Date.parse(game.last_played) : NaN;
   const b = lastLaunched[game.id] ? Date.parse(lastLaunched[game.id]) : NaN;
@@ -929,7 +929,7 @@ function renderSettings() {
     <h2>Behavior</h2>
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
-    ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Game Cabinet.", settings.keep_in_tray)}
+    ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Game Console Alpha.", settings.keep_in_tray)}
     ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
     <h2>Artwork</h2>
     <div class="src"><div><b>SteamGridDB API key</b></div><span></span>
