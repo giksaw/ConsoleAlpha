@@ -29,7 +29,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi"],
+    "category": "Game",
+    "shortDescription": "One library for all your PC games",
+    "windows": {
+      "wix": {
+        "upgradeCode": "5F1FA5FD-3C07-4927-A47F-8AB7756921F1",
+        "language": "en-US"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
