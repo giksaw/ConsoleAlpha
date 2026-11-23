@@ -1,7 +1,7 @@
 {
-  "_comment": "Replace these with the values from Partner Center > your app > Product identity before submitting. Placeholders are fine for local testing.",
-  "identityName": "GameCabinet.Dev",
-  "publisher": "CN=GiksawInteractiveDev",
+  "_comment": "Values from Partner Center > Game Cabinet > Product identity. Do not change.",
+  "identityName": "GiksawInteractive.GameCabinet",
+  "publisher": "CN=A5F227A5-B343-4106-B543-E09F42A768B3",
   "publisherDisplayName": "Giksaw Interactive",
   "displayName": "Game Cabinet",
   "description": "One library for all your PC games: Steam, Epic, GOG, Xbox, Battle.net and more."
