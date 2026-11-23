@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game Cabinet Privacy Policy</title>
+  <style>
+    :root { --bg: #ffffff; --fg: #1c1c22; --mute: #5d5d6b; --line: #e4e4ea; --accent: #4f46e5; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #131318; --fg: #ececf1; --mute: #a2a2b0; --line: #2b2b35; --accent: #a5b4fc; }
+    }
+    body { margin: 0; background: var(--bg); color: var(--fg);
+           font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 16px 64px; }
+    h1 { font-size: 2rem; margin: 0 0 4px; }
+    h2 { font-size: 1.2rem; margin: 2.2em 0 .4em; }
+    p, li { color: var(--fg); }
+    .date { color: var(--mute); margin: 0 0 2em; }
+    a { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: .95rem; }
+    th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--mute); font-weight: 600; }
+    code { font-size: .9em; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Game Cabinet Privacy Policy</h1>
+  <p class="date">Last updated: 23 November 2026</p>
+
+  <p>Game Cabinet is a desktop app for Windows, made by Gladson Mathew, that gathers the games installed on your PC
+  into one library. This policy explains what information the app uses, where it goes, and what stays on your PC.</p>
+
+  <p><strong>Short version:</strong> Game Cabinet has no accounts, no ads, no analytics and no tracking. The developer
+  does not run any servers and never receives your data. Your library and settings stay on your PC. To show cover art,
+  the app asks a few public services for images, and those requests include game names.</p>
+
+  <h2>Information that stays on your PC</h2>
+  <p>To find your games, Game Cabinet reads files and Windows registry entries left by game launchers you have installed
+  (such as Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA app, Xbox, Amazon Games, itch.io and Rockstar
+  Games). It only reads them; it does not change them.</p>
+  <p>The app saves the following on your PC, inside your Windows user profile:</p>
+  <ul>
+    <li>the list of games it found, their install folders and sizes;</li>
+    <li>your favorites, hidden games, custom games you added, launch options and cover-art choices;</li>
+    <li>when you last launched each game from the app;</li>
+    <li>your settings, including a SteamGridDB API key if you choose to enter one.</li>
+  </ul>
+  <p>None of this is sent to the developer. Uninstalling the app does not delete it automatically; you can delete the
+  <code>com.gamelauncher.app</code> folders in <code>%APPDATA%</code> and <code>%LOCALAPPDATA%</code> to remove it.</p>
+
+  <h2>Information sent to other services</h2>
+  <p>Game Cabinet connects to the internet only to find and show cover art. Like any web request, each one reveals your
+  IP address to the service you connect to.</p>
+  <table>
+    <tr><th>Service</th><th>What is sent</th><th>When</th></tr>
+    <tr><td>Steam store search<br><small>store.steampowered.com</small></td>
+        <td>Names of installed games that aren't from Steam</td>
+        <td>Automatically, to find cover art for those games, and when you search for artwork</td></tr>
+    <tr><td>Steam image servers<br><small>steamstatic.com</small></td>
+        <td>Steam app IDs of games in your library (as image requests)</td>
+        <td>Whenever cover art is shown</td></tr>
+    <tr><td>SteamGridDB<br><small>steamgriddb.com</small></td>
+        <td>Game names and your SteamGridDB API key</td>
+        <td>Only if you enter your own API key in Settings</td></tr>
+    <tr><td>Other image hosts</td>
+        <td>A request for the image</td>
+        <td>When showing cover art provided by a launcher (for example Epic Games or itch.io) or an image URL you paste yourself</td></tr>
+    <tr><td>Google Search, in your web browser</td>
+        <td>The game's name</td>
+        <td>Only when you click "Search the web" for cover art</td></tr>
+  </table>
+  <p>These services handle that information under their own privacy policies. Games, launchers and websites that you
+  open from Game Cabinet are separate programs with their own privacy practices.</p>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>We don't collect, store or sell personal information.</li>
+    <li>We don't use analytics, crash reporting, advertising or tracking of any kind.</li>
+    <li>We don't require an account or sign-in.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>Game Cabinet doesn't knowingly collect information from anyone, including children under 13.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If the app starts using information differently, this page will be updated and the date at the top will change.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: open an issue at
+  <a href="https://github.com/giksaw/ConsoleAlpha/issues">github.com/giksaw/ConsoleAlpha/issues</a>.</p>
+</main>
+</body>
+</html>

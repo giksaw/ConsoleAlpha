@@ -1,8 +1,8 @@
 [package]
 name = "game-launcher"
 version = "0.1.0"
-description = "Unified game launcher for Windows"
-authors = ["you"]
+description = "Game Cabinet: one library for all your PC games"
+authors = ["Gladson Mathew"]
 edition = "2021"
 
 [lib]

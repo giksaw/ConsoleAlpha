@@ -1,4 +1,4 @@
-# Cabinet: Game Launcher
+# Game Cabinet
 
 A unified desktop game launcher for Windows built with [Tauri](https://tauri.app/). Scan your game libraries from Steam, Epic Games, and GOG Galaxy, add custom executables, and launch everything from one clean interface.
 
@@ -8,7 +8,7 @@ A unified desktop game launcher for Windows built with [Tauri](https://tauri.app
 - **Custom games** — Manually add executables for games not in a store library
 - **Grid & list views** — Switch between a visual grid and a detailed table view
 - **Search & sort** — Filter by name, sort by recently played or A-Z
-- **Recently played** — Uses Steam's own last-played time, plus every launch made from Cabinet
+- **Recently played** — Uses Steam's own last-played time, plus every launch made from Game Cabinet
 - **Favorites & hiding** — Mark favorites; hide games you don't want to see (always reversible)
 - **Custom cover art** — Automatic Steam artwork lookup by name, or pick your own image
 - **Game status** — Organize your library with Backlog / Playing / Finished states
@@ -87,7 +87,7 @@ Needs the free [Windows SDK](https://developer.microsoft.com/windows/downloads/w
 - **Identity**: before uploading, copy the values from Partner Center → *Product identity* into `msix/identity.json`.
 - **Test locally** (Settings → System → For developers → Developer Mode on):
   `Add-AppxPackage -Register src-tauri\target\msix\stage\AppxManifest.xml`. Remove it with
-  `Get-AppxPackage *GameLauncher* | Remove-AppxPackage`.
+  `Get-AppxPackage *GameCabinet* | Remove-AppxPackage`.
 - The manifest asks for two restricted capabilities you justify at submission: `runFullTrust` (it launches other programs) and `unvirtualizedResources` (games started from it must save to the real AppData/registry, not inside the launcher's package).
 
 ### Frontend-only (Browser Mode)
@@ -102,7 +102,7 @@ Open http://localhost:1420 in your browser. Note that game scanning and launchin
 
 ## Store Detection
 
-Cabinet reads installed games from:
+Game Cabinet reads installed games from:
 
 | Store           | Source                                                              | Launched via                       |
 | --------------- | ------------------------------------------------------------------- | ---------------------------------- |
@@ -137,4 +137,4 @@ store's own art. For games that aren't on Steam, add a free
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Privacy policy: [docs/privacy-policy.html](docs/privacy-policy.html), published with GitHub Pages at https://giksaw.github.io/ConsoleAlpha/privacy-policy.html once the repo is public.

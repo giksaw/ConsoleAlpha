@@ -266,7 +266,7 @@ pub async fn search_steam_covers(name: String) -> Result<Vec<CoverSuggestion>, S
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(12))
-        .user_agent("CabinetLauncher/0.1")
+        .user_agent(concat!("GameCabinet/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }

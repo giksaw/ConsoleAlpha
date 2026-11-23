@@ -1,8 +1,8 @@
 {
   "_comment": "Replace these with the values from Partner Center > your app > Product identity before submitting. Placeholders are fine for local testing.",
-  "identityName": "GameLauncher.Dev",
+  "identityName": "GameCabinet.Dev",
   "publisher": "CN=GameLauncherDev",
-  "publisherDisplayName": "Game Launcher Dev",
-  "displayName": "Game Launcher",
+  "publisherDisplayName": "Gladson Mathew",
+  "displayName": "Game Cabinet",
   "description": "One library for all your PC games: Steam, Epic, GOG, Xbox, Battle.net and more."
 }

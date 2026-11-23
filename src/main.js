@@ -1,4 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import "@fontsource/schibsted-grotesk/400.css";
+import "@fontsource/schibsted-grotesk/500.css";
+import "@fontsource/schibsted-grotesk/600.css";
+import "@fontsource/schibsted-grotesk/800.css";
 
 // ── State ────────────────────────────────────────────────────────────────────
 let allGames = [];
@@ -13,7 +17,7 @@ let selectedGame = null;
 let currentPage = "lib"; // "lib" | "set"
 let controllerIndex = 0;
 let gameStatuses = {}; // game_id → "backlog" | "playing" | "finished"
-let lastLaunched = {}; // game_id → ISO time of the last launch from Cabinet
+let lastLaunched = {}; // game_id → ISO time of the last launch from Game Cabinet
 let menuGame = null;   // game whose three-dot menu is open
 let coverGame = null;  // game whose cover dialog is open
 let coverPending = { value: null }; // staged cover (data URL) from a picked file
@@ -208,6 +212,8 @@ function renderThumb(game) {
 document.addEventListener("error", (e) => {
   const img = e.target;
   if (!img || img.tagName !== "IMG") return;
+  // Cover-dialog preview: keep the broken image faintly visible as feedback.
+  if (img.hasAttribute("data-dim-on-error")) { img.style.opacity = "0.12"; return; }
   const fb = (img.dataset.fb || "").split("|").filter(Boolean);
   if (fb.length) {
     img.dataset.fb = fb.slice(1).join("|");
@@ -923,7 +929,7 @@ function renderSettings() {
     <h2>Behavior</h2>
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
-    ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Cabinet.", settings.keep_in_tray)}
+    ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Game Cabinet.", settings.keep_in_tray)}
     ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
     <h2>Artwork</h2>
     <div class="src"><div><b>SteamGridDB API key</b></div><span></span>
@@ -1188,7 +1194,7 @@ function renderCoverPreview() {
   const v = coverPending.value || typed || coverOverrides.get(coverGame.id) || coverGame.cover_image_path || "";
   const box = $("#cov-prev");
   if (v) {
-    box.innerHTML = `<img src="${esc(v)}" alt="" onerror="this.style.opacity=0.12">`;
+    box.innerHTML = `<img src="${esc(v)}" alt="" data-dim-on-error>`;
   } else {
     const { background, color } = getCoverGradient(coverGame.name);
     box.innerHTML = `<div class="cv" style="background:${background};color:${color}"><span class="nm">${esc(coverGame.name)}</span></div>`;
