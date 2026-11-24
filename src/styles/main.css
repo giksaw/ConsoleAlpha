@@ -214,6 +214,9 @@ button {
   text-align: left;
   display: block;
   width: 100%;
+  /* A card with an install bar is taller; keep its neighbours top-aligned
+     rather than centred in the taller row. */
+  align-self: start;
 }
 
 .cv {
@@ -314,6 +317,68 @@ button {
 .g span {
   color: var(--mute);
   font-size: 12.5px;
+}
+
+/* Owned games that aren't installed: dimmed art, Install instead of Play */
+.g.own .cv img {
+  filter: grayscale(.5) brightness(.6);
+  transition: filter .15s;
+}
+
+.g.own:hover .cv img,
+.g.own:focus-visible .cv img {
+  filter: grayscale(.2) brightness(.8);
+}
+
+.busy [data-install] {
+  display: none;
+}
+
+.tbl tr.own td:nth-child(2) {
+  color: var(--mute);
+}
+
+.ist {
+  font-style: normal;
+}
+
+/* Install progress bar; .ind is the "working, amount unknown" sweep */
+.ibar {
+  display: block;
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.ibar > i {
+  display: block;
+  height: 100%;
+  background: var(--hi);
+  transition: width .6s ease-out;
+}
+
+.ibar.ind > i {
+  width: 30%;
+  animation: ibarSweep 1.4s ease-in-out infinite;
+}
+
+@keyframes ibarSweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ibar.ind > i {
+    animation: none;
+    width: 100%;
+    opacity: .4;
+  }
+}
+
+.tbl .ibar {
+  max-width: 160px;
 }
 
 /* List view */

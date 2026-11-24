@@ -4,6 +4,7 @@ use crate::models::{CoverSuggestion, DetectedStore, GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
 use crate::services::launcher::{shell_open, GameLauncher};
+use crate::services::steam_library::{self, InstallStatus, LibraryGame};
 use tauri::State;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -139,6 +140,43 @@ pub fn open_url(url: String) -> Result<(), String> {
         return Err("Only http(s) URLs are allowed".to_string());
     }
     shell_open(&url).map_err(|e| format!("Failed to open URL: {}", e))
+}
+
+/// Games the user owns in a store but hasn't installed. Only Steam for now;
+/// other stores return an empty list.
+#[tauri::command]
+pub async fn get_store_library(store: String) -> Result<Vec<LibraryGame>, String> {
+    tauri::async_runtime::spawn_blocking(move || match store.as_str() {
+        "steam" => steam_library::owned_uninstalled_games(),
+        _ => Vec::new(),
+    })
+    .await
+    .map_err(|e| format!("Library read failed: {}", e))
+}
+
+/// Ask the store client to install a game. Steam opens its own install dialog
+/// (pick a drive, confirm); the download then runs in Steam.
+#[tauri::command]
+pub fn install_store_game(store: String, app_id: String) -> Result<(), String> {
+    if app_id.is_empty() || !app_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Invalid app id".to_string());
+    }
+    match store.as_str() {
+        "steam" => shell_open(&format!("steam://install/{}", app_id))
+            .map_err(|e| format!("Couldn't open Steam: {}", e)),
+        _ => Err(format!("Installing from {} isn't supported yet", store)),
+    }
+}
+
+/// Install progress for the given app ids (Steam only for now).
+#[tauri::command]
+pub async fn store_install_status(store: String, app_ids: Vec<String>) -> Result<Vec<InstallStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || match store.as_str() {
+        "steam" => steam_library::install_status(&app_ids),
+        _ => Vec::new(),
+    })
+    .await
+    .map_err(|e| format!("Status read failed: {}", e))
 }
 
 /// Reveal an install folder in the OS file manager.

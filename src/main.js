@@ -26,6 +26,7 @@ let settings = {
   keep_in_tray: false,
   hide_removed: false,
   show_stores_in_sidebar: true,
+  show_owned_games: true, // list owned-but-not-installed games on a store's page
   sgdb_key: "",   // SteamGridDB API key (optional) for artwork of non-Steam games
 };
 let storeConfig = {
@@ -52,6 +53,13 @@ const lookupFailed = new Set();  // ids whose lookup errored this session
 
 // On-disk sizes, keyed by game id. Computed lazily for games the user can see.
 const sizes = new Map();         // id → bytes | null | "pending"
+
+// Games owned in Steam but not installed, and their installs. Owned games are
+// kept apart from allGames: `is_installed: false` there means "removed".
+let ownedGames = [];                 // from get_store_library, each tagged owned: true
+const installStatus = new Map();     // app_id → latest status from the backend
+const installWatch = new Map();      // app_id → { since, baseline } installs being followed
+const shownProgress = new Map();     // app_id → highest progress shown, so bars never go back
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const $ = (s) => document.querySelector(s);
@@ -228,7 +236,20 @@ document.addEventListener("error", (e) => {
     img.dataset.fb = fb.slice(1).join("|");
     img.src = fb[0];
   } else {
+    // No art at all: on a cover, show the generated tile with the title so the
+    // card isn't blank (thumbnails already have their gradient behind).
+    const cover = img.parentElement;
+    const name = img.alt;
     img.remove();
+    if (cover && cover.classList.contains("cv") && name && !cover.querySelector(".nm")) {
+      const { background, color } = getCoverGradient(name);
+      cover.style.background = background;
+      cover.style.color = color;
+      const label = document.createElement("span");
+      label.className = "nm";
+      label.textContent = name;
+      cover.prepend(label);
+    }
   }
 }, true);
 
@@ -493,6 +514,23 @@ function baseGames() {
   return [...allGames, ...customGames];
 }
 
+// Any game by id, including owned games that aren't installed.
+function findGame(id) {
+  return baseGames().find((g) => g.id === id) || ownedGames.find((g) => g.id === id);
+}
+
+// Owned-but-not-installed games that belong in a view: a store's own page
+// (when the setting is on) and the Hidden collection — never "All games",
+// favorites or the other collections.
+function ownedGamesFor(filter) {
+  if (!ownedGames.length) return [];
+  const installed = new Set(baseGames().map((g) => g.id));
+  const notInstalled = ownedGames.filter((g) => !installed.has(g.id));
+  if (filter === "hidden") return notInstalled.filter((g) => hiddenGames.has(g.id));
+  if (!settings.show_owned_games) return [];
+  return notInstalled.filter((g) => g.source === filter && !hiddenGames.has(g.id));
+}
+
 // Games shown for a given filter. "All games", "Uninstalled" and "Hidden" always
 // show their full set, so a title can never vanish from the library entirely.
 // Explicitly hidden games only appear under the Hidden collection.
@@ -532,11 +570,14 @@ function matchGame(game, filter) {
 
 function getFilteredGames() {
   let games = getDisplayGames().filter((g) => matchGame(g, currentFilter));
+  games = games.concat(ownedGamesFor(currentFilter));
   if (searchQuery) {
     games = games.filter((g) => g.name.toLowerCase().includes(searchQuery));
   }
   if (sortBy === "az") games.sort((a, b) => a.name.localeCompare(b.name));
   else if (sortBy === "recent") games.sort((a, b) => {
+    // Installed games first; owned-only ones follow, A to Z.
+    if (!!a.owned !== !!b.owned) return a.owned ? 1 : -1;
     const pa = lastPlayed(a), pb = lastPlayed(b);
     if (!pa && !pb) return a.name.localeCompare(b.name);
     if (!pa) return 1;
@@ -709,6 +750,7 @@ async function scanGames({ quiet = false } = {}) {
     allGames = Array.isArray(result) ? result : [];
     console.log("[SCAN] allGames set to", allGames.length, "games");
     sizes.clear();
+    await loadOwnedGames();
     renderAll();
     if (!quiet) toast(`Found ${allGames.length} games`);
   } catch (e) {
@@ -721,7 +763,174 @@ async function scanGames({ quiet = false } = {}) {
   }
 }
 
+// ── Owned games: install from the store, follow progress ────────────────────
+async function loadOwnedGames() {
+  if (!isTauri || storeConfig.stores.steam === false) { ownedGames = []; return; }
+  try {
+    const list = await invoke("get_store_library", { store: "steam" });
+    ownedGames = (Array.isArray(list) ? list : []).map((g) => ({ ...g, owned: true }));
+  } catch (e) {
+    console.error("Couldn't read the Steam library:", e);
+  }
+}
+
+async function installOwnedGame(game) {
+  if (!isTauri) { toast("Installing needs the desktop app"); return; }
+  try {
+    await invoke("install_store_game", { store: "steam", appId: game.app_id });
+    // An old failure in Steam's log isn't news; only a new one is.
+    const cur = installStatus.get(game.app_id);
+    installWatch.set(game.app_id, {
+      since: Date.now(),
+      baseline: cur && cur.state === "failed" ? cur.message : null,
+    });
+    toast("Confirm the install in Steam");
+    refreshInstallViews(game.app_id);
+    scheduleInstallPoll(1500);
+  } catch (e) {
+    toast(typeof e === "string" ? e : "Couldn't open Steam");
+  }
+}
+
+const ACTIVE_INSTALL = new Set(["queued", "preparing", "downloading", "verifying", "installing", "paused"]);
+
+function formatRate(bps) {
+  return bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} MB/s` : `${Math.max(1, Math.round(bps / 1e3))} KB/s`;
+}
+
+// What to show for an owned game's install, or null when nothing is going on.
+// busy hides the Install button; pct/indeterminate drive the progress bar.
+function installInfo(g) {
+  const st = installStatus.get(g.app_id);
+  const w = installWatch.get(g.app_id);
+  const state = st ? st.state : "none";
+  if (state === "failed" && w && st.message !== w.baseline) {
+    return { text: "Install failed", title: st.message, busy: false };
+  }
+  if (!ACTIVE_INSTALL.has(state)) {
+    if (!w) return null;
+    const text = state === "installed" ? "Finishing up…" : "Waiting for Steam…";
+    return { text, busy: true, indeterminate: true };
+  }
+  const p = Math.max(shownProgress.get(g.app_id) || 0, st.progress || 0);
+  const pct = st.progress == null && !shownProgress.has(g.app_id) ? null : Math.floor(p * 100);
+  switch (state) {
+    case "downloading":
+      return {
+        text: `Downloading${pct != null ? ` ${pct}%` : ""}${st.rate ? ` · ${formatRate(st.rate)}` : ""}`,
+        pct, busy: true, indeterminate: pct == null,
+      };
+    case "paused":
+      return { text: `Paused${pct != null ? ` at ${pct}%` : ""} in Steam`, pct, busy: false };
+    case "queued": return { text: "Queued in Steam", pct, busy: true };
+    case "verifying": return { text: "Verifying files…", busy: true, indeterminate: true };
+    case "installing": return { text: "Installing…", busy: true, indeterminate: true };
+    default: return { text: "Preparing…", busy: true, indeterminate: true };
+  }
+}
+
+function installLine(g) {
+  const info = installInfo(g);
+  if (!info) return `${esc(sourceName(g))} · Not installed`;
+  const title = info.title ? ` title="${esc(info.title)}"` : "";
+  const bar = info.indeterminate
+    ? `<i class="ibar ind"><i></i></i>`
+    : info.pct != null ? `<i class="ibar"><i style="width:${info.pct}%"></i></i>` : "";
+  return `<em class="ist"${title}>${esc(info.text)}</em>${bar}`;
+}
+
+function installBusy(g) {
+  const info = installInfo(g);
+  return !!(info && info.busy);
+}
+
+// Update an owned game's status everywhere it's shown, without re-rendering
+// the grid (which would restart image loads every couple of seconds).
+function refreshInstallViews(appId) {
+  const g = ownedGames.find((x) => x.app_id === appId);
+  if (!g) return;
+  const sel = CSS.escape(g.id);
+  const busy = installBusy(g);
+  document.querySelectorAll(`[data-inst="${sel}"]`).forEach((el) => { el.innerHTML = installLine(g); });
+  document.querySelectorAll(`[data-own="${sel}"]`).forEach((el) => el.classList.toggle("busy", busy));
+}
+
+// Poll install status every 2 s while an install is being followed. While the
+// Steam page is open, also look every 30 s for installs started in Steam itself.
+let installTimer = 0;
+let lastFullInstallCheck = 0;
+
+function steamPageOpen() {
+  return currentPage === "lib" && currentFilter === "Steam" && settings.show_owned_games && ownedGames.length > 0;
+}
+
+function scheduleInstallPoll(delay = 2000) {
+  clearTimeout(installTimer);
+  installTimer = 0;
+  if (!isTauri || (!installWatch.size && !steamPageOpen())) return;
+  installTimer = setTimeout(pollInstalls, delay);
+}
+
+async function pollInstalls() {
+  installTimer = 0;
+  const ids = new Set(installWatch.keys());
+  if (steamPageOpen() && Date.now() - lastFullInstallCheck > 30000) {
+    lastFullInstallCheck = Date.now();
+    ownedGamesFor("Steam").forEach((g) => ids.add(g.app_id));
+  }
+  if (ids.size) {
+    try {
+      const statuses = await invoke("store_install_status", { store: "steam", appIds: [...ids] });
+      await applyInstallStatuses(statuses || []);
+    } catch (e) {
+      console.error("Install status failed:", e);
+    }
+  }
+  scheduleInstallPoll();
+}
+
+async function applyInstallStatuses(statuses) {
+  const finished = [];
+  for (const st of statuses) {
+    const id = st.app_id;
+    installStatus.set(id, st);
+    if (ACTIVE_INSTALL.has(st.state)) {
+      if (!installWatch.has(id)) installWatch.set(id, { since: Date.now(), baseline: null });
+      if (st.progress != null) shownProgress.set(id, Math.max(shownProgress.get(id) || 0, st.progress));
+    }
+    const w = installWatch.get(id);
+    if (w) {
+      if (st.state === "installed") finished.push(id);
+      // Nothing started within five minutes: the Steam dialog was probably
+      // cancelled. A new failure stays on screen until then too.
+      else if (!ACTIVE_INSTALL.has(st.state) && Date.now() - w.since > 300000) {
+        installWatch.delete(id);
+        shownProgress.delete(id);
+      }
+    }
+    refreshInstallViews(id);
+  }
+  if (!finished.length) return;
+
+  for (const id of finished) {
+    installWatch.delete(id);
+    shownProgress.delete(id);
+    const g = ownedGames.find((x) => x.app_id === id);
+    toast(`${g ? g.name : "Game"} is installed`);
+  }
+  // Pick up the new install as a normal, playable game.
+  try {
+    const games = await invoke("rescan_platform", { platform: "steam" });
+    if (Array.isArray(games)) allGames = games;
+  } catch (e) {
+    console.error("Rescan after install failed:", e);
+  }
+  await loadOwnedGames();
+  renderAll();
+}
+
 async function launchGame(game) {
+  if (game.owned) { installOwnedGame(game); return; }
   if (!isTauri) {
     toast("Launching " + game.name + " (browser mode)");
     return;
@@ -786,7 +995,7 @@ function renderRail() {
     const rows = STORE_CATALOG
       .filter((s) => storeConfig.stores[s.id] !== false)
       .map((s) => ({ s, n: cnt(s.source) }))
-      .filter((r) => r.n > 0);
+      .filter((r) => r.n > 0 || ownedGamesFor(r.s.source).length > 0);
     if (rows.length) {
       html += `<h4>Stores</h4>`;
       for (const { s, n } of rows) {
@@ -798,7 +1007,7 @@ function renderRail() {
   html += `<button class="ri ${currentPage === "lib" && currentFilter === "local" ? "on" : ""}" data-f="local">Local Games<em>${cnt("local")}</em></button>`;
   html += `<button class="ri ${currentPage === "lib" && currentFilter === "uninstalled" ? "on" : ""}" data-f="uninstalled">Uninstalled<em>${cnt("uninstalled")}</em></button>`;
   if (hiddenGames.size > 0) {
-    html += `<button class="ri ${currentPage === "lib" && currentFilter === "hidden" ? "on" : ""}" data-f="hidden">Hidden<em>${cnt("hidden")}</em></button>`;
+    html += `<button class="ri ${currentPage === "lib" && currentFilter === "hidden" ? "on" : ""}" data-f="hidden">Hidden<em>${cnt("hidden") + ownedGamesFor("hidden").length}</em></button>`;
   }
   html += `<h4>App</h4>`;
   html += `<button class="ri ${currentPage === "set" ? "on" : ""}" data-pg="set">Sources &amp; settings</button>`;
@@ -835,7 +1044,15 @@ function renderLibrary() {
       : `Nothing here yet. Add a game, or rescan in Sources &amp; settings.`;
     h = `<div class="empty">${msg}</div>`;
   } else if (currentView === "grid") {
-    h = `<div class="grid">` + games.map((g) => `
+    h = `<div class="grid">` + games.map((g) => g.owned ? `
+      <button class="g own ${installBusy(g) ? "busy" : ""}" data-id="${esc(g.id)}" data-own="${esc(g.id)}">
+        ${renderCover(g, "", `<span class="play" data-install="${esc(g.id)}">Install</span>`)}
+        <div class="grow">
+          <b>${esc(g.name)}</b>
+          <span class="dots" data-menu="${esc(g.id)}" role="button" tabindex="0" aria-label="Options for ${esc(g.name)}">&#8942;</span>
+        </div>
+        <span data-inst="${esc(g.id)}">${installLine(g)}</span>
+      </button>` : `
       <button class="g" data-id="${esc(g.id)}">
         ${renderCover(g, "", `<span class="play" data-play="${esc(g.id)}">Play</span>`)}
         <div class="grow">
@@ -846,7 +1063,16 @@ function renderLibrary() {
       </button>`).join("") + `</div>`;
   } else {
     h = `<table class="tbl"><thead><tr><th></th><th>Name</th><th>Store</th><th class="r">Size</th><th>Last played</th><th></th><th></th></tr></thead><tbody>`
-      + games.map((g) => `
+      + games.map((g) => g.owned ? `
+        <tr class="own ${installBusy(g) ? "busy" : ""}" data-id="${esc(g.id)}" data-own="${esc(g.id)}">
+          <td>${renderThumb(g)}</td>
+          <td>${esc(g.name)}</td>
+          <td>${esc(sourceName(g))}</td>
+          <td class="r">—</td>
+          <td data-inst="${esc(g.id)}">${installLine(g)}</td>
+          <td class="r"><button class="btn o" data-install="${esc(g.id)}" style="padding:5px 14px">Install</button></td>
+          <td class="r"><button class="dots-inline" data-menu="${esc(g.id)}" aria-label="Options for ${esc(g.name)}">&#8942;</button></td>
+        </tr>` : `
         <tr data-id="${esc(g.id)}">
           <td>${renderThumb(g)}</td>
           <td>${esc(g.name)}</td>
@@ -863,6 +1089,8 @@ function renderLibrary() {
   if (isTauri) {
     games.forEach(requestCoverLookup);
     if (currentView === "list") observeSizeCells();
+    // Follow installs on the Steam page, including ones started in Steam.
+    if (steamPageOpen() && !installTimer) scheduleInstallPoll(0);
   }
 
   const qi = $("#q");
@@ -959,6 +1187,7 @@ function renderSettings() {
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
     ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Game Console Alpha.", settings.keep_in_tray)}
+    ${tg("show_owned_games", "Show games I own but haven't installed", "On a store's page, lists the rest of your library with an Install button. Steam only for now.", settings.show_owned_games !== false)}
     ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
     <h2>Artwork</h2>
     <div class="src"><div><b>SteamGridDB API key</b></div><span></span>
@@ -1022,6 +1251,7 @@ function renderAll() {
 
 // ── Details panel ────────────────────────────────────────────────────────────
 function openPanel(game) {
+  if (game.owned) { openOwnedPanel(game); return; }
   selectedGame = game;
   const isFav = favorites.has(game.id);
   const hidden = hiddenGames.has(game.id);
@@ -1051,6 +1281,30 @@ function openPanel(game) {
   panelEl.classList.add("on");
   scrimEl.classList.add("on");
   requestSize(game);
+}
+
+// Details for a game the user owns but hasn't installed.
+function openOwnedPanel(game) {
+  selectedGame = game;
+  const hidden = hiddenGames.has(game.id);
+  panelEl.innerHTML = `<button class="x" id="px" aria-label="Close">&times;</button>
+    ${renderCover(game)}
+    <h2>${esc(game.name)}</h2>
+    <p>In your ${esc(sourceName(game))} library, not installed on this PC${hidden ? " · hidden" : ""}</p>
+    <div class="acts own ${installBusy(game) ? "busy" : ""}" data-own="${esc(game.id)}">
+      <button class="btn" data-install="${esc(game.id)}">Install</button>
+      <button class="btn o" id="pstore">Store page</button>
+      <button class="btn o" id="phide">${hidden ? "Unhide" : "Hide"}</button>
+    </div>
+    <dl>
+      <dt>Install</dt><dd data-inst="${esc(game.id)}">${installLine(game)}</dd>
+    </dl>`;
+  panelEl.classList.add("on");
+  scrimEl.classList.add("on");
+}
+
+function openStorePage(game) {
+  openExternal(`https://store.steampowered.com/app/${encodeURIComponent(game.app_id)}/`);
 }
 
 function closePanel() {
@@ -1389,7 +1643,12 @@ function openGameMenu(game, anchor) {
   const isFav = favorites.has(game.id);
   const hidden = hiddenGames.has(game.id);
   const isLocal = game.source === "Custom";
-  menuEl.innerHTML = `
+  menuEl.innerHTML = game.owned ? `
+    <button data-mi="install">Install</button>
+    <button data-mi="store">Open store page</button>
+    <button data-mi="hide">${hidden ? "Unhide game" : "Hide game"}</button>
+    <button data-mi="details">View details</button>
+  ` : `
     <button data-mi="play">Play</button>
     <button data-mi="favorite">${isFav ? "Remove from favorites" : "Add to favorites"}</button>
     <button data-mi="cover">Set cover image</button>
@@ -1422,6 +1681,8 @@ function closeMenu() {
 function handleMenuAction(action, game) {
   switch (action) {
     case "play": launchGame(game); break;
+    case "install": installOwnedGame(game); break;
+    case "store": openStorePage(game); break;
     case "favorite": toggleFavorite(game.id); break;
     case "cover": openCoverDialog(game); break;
     case "hide": toggleHidden(game.id); break;
@@ -1717,7 +1978,7 @@ function setupEventListeners() {
     const menuBtn = e.target.closest("[data-menu]");
     if (menuBtn) {
       e.stopPropagation();
-      const game = baseGames().find((g) => g.id === menuBtn.dataset.menu);
+      const game = findGame(menuBtn.dataset.menu);
       if (game) openGameMenu(game, menuBtn);
       return;
     }
@@ -1734,6 +1995,15 @@ function setupEventListeners() {
 
     // Any other click dismisses an open menu
     if (menuEl.classList.contains("on")) closeMenu();
+
+    // Install buttons (owned games that aren't installed)
+    const installBtn = e.target.closest("[data-install]");
+    if (installBtn) {
+      e.stopPropagation();
+      const game = findGame(installBtn.dataset.install);
+      if (game && game.owned) installOwnedGame(game);
+      return;
+    }
 
     // Play buttons
     const playBtn = e.target.closest("[data-play]");
@@ -1761,7 +2031,7 @@ function setupEventListeners() {
     // Game card / row click
     const card = e.target.closest("[data-id]");
     if (card) {
-      const game = baseGames().find((g) => g.id === card.dataset.id);
+      const game = findGame(card.dataset.id);
       if (game) openPanel(game);
       return;
     }
@@ -1804,6 +2074,7 @@ function setupEventListeners() {
     // Panel actions
     if (e.target.id === "fv" && selectedGame) { toggleFavorite(selectedGame.id); openPanel(selectedGame); return; }
     if (e.target.id === "pcov" && selectedGame) { openCoverDialog(selectedGame); return; }
+    if (e.target.id === "pstore" && selectedGame) { openStorePage(selectedGame); return; }
     if (e.target.id === "phide" && selectedGame) { toggleHidden(selectedGame.id); openPanel(selectedGame); return; }
 
     // Cover dialog actions
@@ -1945,6 +2216,8 @@ async function init() {
   await loadStoreConfig();
   await loadDetectedStores();
   await loadGameFolders();
+  renderAll();
+  await loadOwnedGames();
   renderAll();
   // Show the saved library first; refresh it in the background if enabled.
   // With nothing saved yet there is nothing to show, so always scan then.

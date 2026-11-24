@@ -46,14 +46,14 @@ impl PlatformScanner for SteamScanner {
     }
 }
 
-fn get_steam_path() -> Option<PathBuf> {
+pub(crate) fn get_steam_path() -> Option<PathBuf> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let steam = hkcu.open_subkey("Software\\Valve\\Steam").ok()?;
     let path: String = steam.get_value("SteamPath").ok()?;
     Some(PathBuf::from(path.replace('/', "\\")))
 }
 
-fn get_library_folders(steam_path: &Path) -> Vec<PathBuf> {
+pub(crate) fn get_library_folders(steam_path: &Path) -> Vec<PathBuf> {
     let mut folders = vec![steam_path.to_path_buf()];
 
     let vdf_path = steam_path.join("steamapps").join("libraryfolders.vdf");
@@ -93,6 +93,13 @@ fn parse_app_manifest(path: &Path) -> Option<GameEntry> {
 
     let app_id = extract_vdf_value(&content, "appid")?;
     if NON_GAME_APP_IDS.contains(&app_id.as_str()) {
+        return None;
+    }
+    // A first-time install that's still downloading has a manifest but not the
+    // "fully installed" flag (4). It's shown as an owned game with install
+    // progress, not as an installed game whose folder is missing.
+    let state_flags = extract_vdf_value(&content, "StateFlags").and_then(|v| v.parse::<u32>().ok());
+    if state_flags.is_some_and(|f| f & 4 == 0) {
         return None;
     }
     let name = extract_vdf_value(&content, "name")?;
@@ -137,7 +144,7 @@ fn parse_app_manifest(path: &Path) -> Option<GameEntry> {
     })
 }
 
-fn extract_vdf_value(content: &str, key: &str) -> Option<String> {
+pub(crate) fn extract_vdf_value(content: &str, key: &str) -> Option<String> {
     let pattern = format!("\"{}\"", key);
     for line in content.lines() {
         let trimmed = line.trim();

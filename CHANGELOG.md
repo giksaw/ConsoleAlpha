@@ -402,6 +402,33 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 9 — Steam: Owned Games & Install from the App (Nov 24, 2026)
+
+### Backend Changes
+| File | Change |
+|---|---|
+| `src-tauri/src/services/steam_library.rs` | **New.** `owned_uninstalled_games()` reads the Steam client's own caches, so it needs no login or Web API key: `appcache/packageinfo.vdf` (licenses → app ids; package 0 skipped, since every account has it) and `appcache/appinfo.vdf` (name + type; only wanted entries are parsed). Handles packageinfo v27/v28 and appinfo v27/v28/v29; an unknown format returns nothing instead of garbage. When several accounts have used the PC, the list is narrowed to the current account's `userdata/<id>/config/librarycache`. `install_status(app_ids)` reports queued / preparing / downloading / verifying / installing / paused / installed / failed from `logs/content_log.txt`, with progress from `steamapps/downloading/state_<app>_<depot>.patch` (24 bytes per finished chunk ÷ "Downloading N chunks for depot D") extrapolated at the logged download rate between checkpoints |
+| `src-tauri/src/commands/mod.rs`, `lib.rs` | **New** commands `get_store_library(store)`, `install_store_game(store, app_id)` (opens `steam://install/<id>`, digits only) and `store_install_status(store, app_ids)` |
+| `src-tauri/src/scanners/steam.rs` | Skips manifests without the "fully installed" flag (a first install still downloading), so they aren't listed as removed games; helpers shared with the new module |
+
+### Frontend Changes
+- **A store's page lists owned games that aren't installed**, after the installed ones: dimmed art, "Steam · Not installed", and **Install** in place of Play (grid, list, details panel, three-dot menu with *Open store page*). They never appear in All games, Recently played, Favorites or the other collections, and are kept apart from `allGames`, where `is_installed: false` means "removed". Hidden ones show under Hidden.
+- **Install** opens Steam's own install dialog; the card then shows *Waiting for Steam… → Downloading 42% · 2.3 MB/s* (bar never moves backwards) *→ Verifying → Installing*, and when Steam reports it installed, rescans Steam so it becomes a normal playable card. Installs started in Steam itself are picked up while the Steam page is open (checked every 30 s; 2 s while one is running).
+- Setting **Show games I own but haven't installed** (on by default).
+- A cover whose every image fails now falls back to the generated title tile instead of a blank card.
+
+### Research (why it works this way)
+- Steam's app manifest only gets `BytesDownloaded` when a download stops, and Steam preallocates *and zero-fills* every file up front, so manifest fields, folder size and NTFS valid-data length are all useless for live progress. The chunk-state file is the only on-disk counter; Steam flushes it every few minutes, hence the rate-based extrapolation between checkpoints.
+- Pausing in Steam is logged as `update canceled : Disabled (Suspended)`.
+- Epic: `com.epicgames.launcher://apps/<ns>%3A<id>%3A<app>?action=install` is handled by Epic's `AppInstallUriHandler` (confirms ownership, opens the install-location picker); `Data/Catalog/catcache.bin` (base64 JSON) lists owned items, and `releaseInfo[0].appId` is the manifest `AppName`. Epic logs no live progress — only a pending manifest with `InstallSize`. Not built yet.
+
+### Verification
+- 5 new unit tests (packageinfo skips package 0, appinfo v29 name/type, unknown formats, download progress maths, finished/paused/failed states); 24 total pass.
+- Real files: 138 owned-not-installed games read in 33 ms.
+- Real installs: Bongo Cat via `steam://install` while logging every signal; Find 100 Ducks and Blast Them! end to end from the app's Install button (debug build, isolated WebView2 profile, driven over CDP).
+
+---
+
 ## Known Issues
 - **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
 - **SteamGridDB response parsing is untested with a real key** — the field names (`data[].id/name/url`) follow the API docs.
@@ -445,6 +472,7 @@ game-launcher/
 │   │   │   ├── mod.rs
 │   │   │   ├── aggregator.rs    # Combines scanners; enabled stores; path de-dup
 │   │   │   ├── cache.rs         # Disk cache + favorites persistence (app data dir)
+│   │   │   ├── steam_library.rs # Owned Steam games + live install progress
 │   │   │   └── launcher.rs      # Game launching + shell_open (links without cmd)
 │   │   └── commands/mod.rs      # Tauri commands
 │   ├── icons/                   # App icon set + per-store PNGs (generated)
