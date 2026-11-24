@@ -1020,7 +1020,8 @@ async function openExternal(url) {
 }
 
 async function openGameFolder(game) {
-  const path = game.install_path;
+  const exeDir = (game.executable_path || "").replace(/[\\/][^\\/]*$/, "");
+  const path = game.install_path || exeDir;
   if (!path) { toast("No folder known for this game"); return; }
   if (!isTauri) { toast("Opening folders needs the desktop app"); return; }
   try { await invoke("open_game_folder", { path }); }
@@ -1347,13 +1348,27 @@ function openOwnedPanel(game) {
   scrimEl.classList.add("on");
 }
 
-function openStorePage(game) {
-  if (game.store === "epic") {
-    // Epic's catalog cache has no store-page slug; search by title instead.
-    openExternal(`https://store.epicgames.com/en-US/browse?q=${encodeURIComponent(game.name)}&sortBy=relevancy`);
-  } else {
-    openExternal(`https://store.steampowered.com/app/${encodeURIComponent(game.app_id)}/`);
+// The game's page on its store's website, or null when there's no good one.
+// Steam has a page per app id; the others are searched by title (Epic's
+// catalog cache has no store-page slug, and the other scanners know no ids).
+function storePageUrl(game) {
+  const q = encodeURIComponent(game.name || "");
+  const steamId = game.owned && game.store === "steam" ? game.app_id : (/^steam_(\d+)$/.exec(game.id || "") || [])[1];
+  if (steamId) return `https://store.steampowered.com/app/${encodeURIComponent(steamId)}/`;
+  switch (game.owned ? game.store : game.source) {
+    case "epic":
+    case "Epic": return `https://store.epicgames.com/en-US/browse?q=${q}&sortBy=relevancy`;
+    case "GOG": return `https://www.gog.com/en/games?query=${q}`;
+    case "itch.io": return `https://itch.io/search?q=${q}`;
+    case "Xbox": return `https://apps.microsoft.com/search?query=${q}`;
+    default: return null;
   }
+}
+
+function openStorePage(game) {
+  const url = storePageUrl(game);
+  if (url) openExternal(url);
+  else toast("No store page for this game");
 }
 
 function closePanel() {
@@ -1687,6 +1702,8 @@ async function setFolderCheckPeriodic(enabled) {
 }
 
 // ── Per-game three-dot menu ──────────────────────────────────────────────────
+// `anchor` is the element the menu hangs under (the three-dot button), or a
+// { x, y } point for a right-click.
 function openGameMenu(game, anchor) {
   menuGame = game;
   const isFav = favorites.has(game.id);
@@ -1699,24 +1716,32 @@ function openGameMenu(game, anchor) {
     <button data-mi="details">View details</button>
   ` : `
     <button data-mi="play">Play</button>
+    ${!isLocal && storePageUrl(game) ? `<button data-mi="store">Open store page</button>` : ""}
     <button data-mi="favorite">${isFav ? "Remove from favorites" : "Add to favorites"}</button>
     <button data-mi="cover">Set cover image</button>
     <button data-mi="hide">${hidden ? "Unhide game" : "Hide game"}</button>
-    <button data-mi="folder">Open install folder</button>
+    <button data-mi="folder">${isLocal ? "Open game folder" : "Open install folder"}</button>
     <button data-mi="details">View details</button>
     ${isLocal ? `<button data-mi="remove" class="danger">Remove from library</button>` : ""}
   `;
   menuEl.style.left = "-9999px";
   menuEl.style.top = "0px";
   menuEl.classList.add("on");
-  const r = anchor.getBoundingClientRect();
   const mw = menuEl.offsetWidth;
   const mh = menuEl.offsetHeight;
-  let x = r.right - mw;
-  let y = r.bottom + 6;
+  let x, y;
+  if (anchor.getBoundingClientRect) {
+    const r = anchor.getBoundingClientRect();
+    x = r.right - mw;
+    y = r.bottom + 6;
+    if (y + mh > window.innerHeight - 8) y = r.top - mh - 6;
+  } else {
+    x = anchor.x;
+    y = anchor.y;
+    if (y + mh > window.innerHeight - 8) y = anchor.y - mh;
+  }
   if (x < 8) x = 8;
   if (x + mw > window.innerWidth - 8) x = window.innerWidth - mw - 8;
-  if (y + mh > window.innerHeight - 8) y = r.top - mh - 6;
   if (y < 8) y = 8;
   menuEl.style.left = x + "px";
   menuEl.style.top = y + "px";
@@ -2240,6 +2265,18 @@ function setupEventListeners() {
       if (menuEl.classList.contains("on")) { closeMenu(); return; }
       closePanel();
     }
+  });
+
+  // Right-click a game (card or list row) for its menu, at the pointer. The
+  // keyboard's context-menu key reports no position, so hang it off the card.
+  document.addEventListener("contextmenu", (e) => {
+    const card = e.target.closest("[data-id]");
+    if (!card || !scrollEl.contains(card)) return;
+    const game = findGame(card.dataset.id);
+    if (!game) return;
+    e.preventDefault();
+    const atPointer = e.clientX || e.clientY;
+    openGameMenu(game, atPointer ? { x: e.clientX, y: e.clientY } : card);
   });
 
   // Dismiss the menu on scroll / resize

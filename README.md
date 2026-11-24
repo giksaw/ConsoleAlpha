@@ -25,6 +25,7 @@ Game Console Alpha doesn't sell, download or install games, and it doesn't colle
 - **Search & sort** — Filter by name, sort by recently played or A-Z
 - **Recently played** — Uses Steam's own last-played time, plus every launch made from Game Console Alpha
 - **Favorites & hiding** — Mark favorites; hide games you don't want to see (always reversible)
+- **Right-click menu** — Right-click any game to play, install, open its store page, open its install (or game) folder, set a cover, favorite or hide it
 - **Custom cover art** — Automatic Steam artwork lookup by name, or pick your own image
 - **Game status** — Organize your library with Backlog / Playing / Finished states
 - **Controller mode** — Open with a gamepad's Start button; navigate and launch with a gamepad or keyboard (A = play, B = back, Y = favorite)

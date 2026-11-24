@@ -459,6 +459,18 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 10.1 — Right-click Menu, Store Pages, Game Folders (Nov 24, 2026)
+
+### Frontend Changes
+- **Right-click a game** (grid card or list row) to open its menu at the pointer; the keyboard's context-menu key opens it at the card. The webview's own menu no longer appears on games.
+- **Open store page** for installed store games too: Steam opens the game's page by app id; Epic, GOG and itch.io search their store by title, and Xbox searches the Microsoft Store. Battle.net, Ubisoft, EA, Amazon and Rockstar don't get the item (no reliable link).
+- Custom games: **Open game folder**, which falls back to the executable's folder when a game added by an older version saved no install folder.
+
+### Verification
+- Real app over CDP: right-click on a Steam, an Epic, an owned-not-installed and a custom game shows the right items at the pointer; the keyboard path positions under the card. *Open store page* opened the Steam page and Epic searches in the browser (the IPC intercept meant to stop that didn't hold). The folder fallback was checked offline (`C:\Games\Old Game\game.exe` → `C:\Games\Old Game`).
+
+---
+
 ## Known Issues
 - **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
 - **SteamGridDB response parsing is untested with a real key** — the field names (`data[].id/name/url`) follow the API docs.
