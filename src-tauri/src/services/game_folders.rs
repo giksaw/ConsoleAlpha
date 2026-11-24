@@ -173,6 +173,7 @@ impl GameFolders {
                     || !path.is_dir()
                     || is_hidden_or_launcher_dir(&path)
                     || overlaps_library(&key, &known)
+                    || is_store_install(&path)
                     || changed_within(&path, settle)
                 {
                     continue;
@@ -204,6 +205,22 @@ impl GameFolders {
 fn overlaps_library(key: &str, known: &HashSet<String>) -> bool {
     let inside = format!("{}\\", key);
     known.iter().any(|k| k == key || k.starts_with(&inside))
+}
+
+/// A game a store manages: Epic leaves an `.egstore` folder, GOG a
+/// `goggame-<id>.info` file. The store scan picks these up, so offering them
+/// too would list the game twice — e.g. when a store installs into a game
+/// folder while the app runs and the 30-minute check sees it before a rescan.
+fn is_store_install(dir: &Path) -> bool {
+    if dir.join(".egstore").is_dir() {
+        return true;
+    }
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            name.starts_with("goggame-") && name.ends_with(".info")
+        })
+    })
 }
 
 fn is_hidden_or_launcher_dir(path: &Path) -> bool {
@@ -272,6 +289,10 @@ mod tests {
         make_game(&root, "Steam Game", "game.exe");
         make_game(&root, "Custom Game", "game.exe");
         make_game(&root, "SteamLibrary", "steam.exe");
+        make_game(&root, "Epic Game", "game.exe");
+        fs::create_dir_all(root.join("Epic Game").join(".egstore")).unwrap();
+        make_game(&root, "GOG Game", "game.exe");
+        fs::write(root.join("GOG Game").join("goggame-1207658924.info"), b"{}").unwrap();
         fs::create_dir_all(root.join("Saves")).unwrap(); // no exe yet
 
         let mut cfg = GameFolders::default();

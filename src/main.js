@@ -1146,6 +1146,9 @@ function removeCustomGame(game) {
   if (!confirm(`Remove "${game.name}" from your library?`)) return;
   customGames = customGames.filter((g) => g.id !== game.id);
   saveCustomGames();
+  // If it came from a game folder, count the folder as ignored: it isn't
+  // offered again right away, but "Suggest again" brings it back.
+  if (isTauri && game.install_path) markFolders([game.install_path], "ignored");
   toast("Removed " + game.name);
   renderAll();
 }

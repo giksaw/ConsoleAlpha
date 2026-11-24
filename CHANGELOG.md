@@ -380,7 +380,7 @@ Open DevTools (F12) → Console to see:
 ### Backend Changes
 | File | Change |
 |---|---|
-| `src-tauri/src/services/game_folders.rs` | **New** — game folders saved in `game_folders.json`: watched folders, the 30-minute switch, and every subfolder the user answered (`added` / `ignored`). `candidates()` offers direct subfolders that aren't in the library, skipping answered, hidden/system and launcher-library folders (`SteamLibrary`, `Epic Games`…), folders with no exe yet, and anything created or changed in the last 60 s (still copying) — those are re-checked later, not marked seen |
+| `src-tauri/src/services/game_folders.rs` | **New** — game folders saved in `game_folders.json`: watched folders, the 30-minute switch, and every subfolder the user answered (`added` / `ignored`). `candidates()` offers direct subfolders that aren't in the library, skipping answered, hidden/system and launcher-library folders (`SteamLibrary`, `Epic Games`…), folders with no exe yet, and anything created or changed in the last 60 s (still copying) — those are re-checked later, not marked seen. Epic (`.egstore`) and GOG (`goggame-*.info`) installs are skipped so a store install caught by the 30-minute check before a rescan isn't listed twice |
 | `src-tauri/src/commands/game_folders.rs` | **New** commands: `get/add/remove_game_folder(s)`, `set_game_folders_periodic`, `mark_game_folders`, `reset_ignored_folders`, `check_game_folders(known_paths)` (custom-game paths from the frontend + store games from the saved library), and native `pick_folder` / `pick_executable` |
 | `src-tauri/src/scanners/common.rs` | `list_executables()` returns the ranked exe list (`guess_executable` now uses it); **new** `clean_title()` turns `Hades_v1.38 [GOG]` into `Hades` |
 | `src-tauri/src/lib.rs`, `Cargo.toml` | Added `tauri-plugin-dialog` (used from Rust only, so no capability file is needed) |
@@ -392,11 +392,13 @@ Open DevTools (F12) → Console to see:
 - Detected games are custom games whose install folder is the game folder itself, so *Open install folder* and the size cover the whole game.
 - **Add game → Browse** now uses the native file picker; the webview file input only gave the file name, not the full path.
 - Custom-game ids get a counter suffix so games added in the same millisecond can't collide.
+- Removing a custom game marks its folder *ignored*, so it isn't offered straight back but *Suggest again* restores it.
 
 ### Verification
 - 4 new unit tests (`clean_title`, `list_executables`, candidate filtering, config round-trip); 19 total pass.
 - Real app (debug build, isolated WebView2 profile, driven over CDP): launch check → banner → checklist; untick/rename/exe choice saved correctly; ignored count + *Suggest again*; single popup Ignore / Not now / Escape; popup held while unfocused and shown on focus; 30-minute switch persists. `C:\Games` dry run found its one game in 45 ms.
-- **Not verified:** the native folder/exe pickers (can't be driven over CDP) and a real 30-minute timer tick.
+- Native pickers: folder and exe pickers open owned by the main window and return full paths (`C:\Games`, `…\notepad.exe`); cancel returns `null`. *Add folder* → pick `C:\Games` → popup offered "over the hill"; *Browse* opens the exe picker.
+- **Not verified:** a real 30-minute timer tick.
 
 ---
 
