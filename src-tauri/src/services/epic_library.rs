@@ -276,6 +276,14 @@ static READINGS: Mutex<Option<HashMap<String, Vec<(Instant, u64)>>>> = Mutex::ne
 /// reading swings between a few hundred KB/s and 20+ MB/s.
 const RATE_WINDOW_SECS: f64 = 10.0;
 
+/// Per app: bytes on disk and when that number last changed.
+static LAST_CHANGE: Mutex<Option<HashMap<String, (u64, Instant)>>> = Mutex::new(None);
+
+/// No new bytes for this long means the download is paused or cancelled in
+/// Epic (a cancelled install leaves its Pending manifest behind). Epic's
+/// final verification also writes nothing, but that's caught by `phase` first.
+const STALL_SECS: u64 = 60;
+
 pub fn install_status(app_ids: &[String]) -> Vec<InstallStatus> {
     let data = epic_data_dir().join("Manifests");
     let installed: HashSet<String> = manifests(&data)
@@ -301,9 +309,15 @@ pub fn install_status(app_ids: &[String]) -> Vec<InstallStatus> {
                 s.bytes_total = (m.install_size > 0).then_some(m.install_size);
                 s.bytes_done = Some(on_disk);
                 s.progress = s.bytes_total.map(|t| (on_disk as f64 / t as f64).min(0.99));
+                let now = Instant::now();
                 s.state = phase(on_disk, staging, m.install_size).into();
+                let stalled = seconds_unchanged(id, on_disk, now) >= STALL_SECS;
                 if s.state == "downloading" {
-                    s.rate = rate_for(id, on_disk, Instant::now());
+                    if stalled {
+                        s.state = "paused".into();
+                    } else {
+                        s.rate = rate_for(id, on_disk, now);
+                    }
                 }
             }
             s
@@ -320,6 +334,19 @@ fn phase(on_disk: u64, staging: u64, install_size: u64) -> &'static str {
         "verifying"
     } else {
         "downloading"
+    }
+}
+
+/// How long the byte count for this app has stayed the same.
+fn seconds_unchanged(id: &str, bytes: u64, now: Instant) -> u64 {
+    let Ok(mut guard) = LAST_CHANGE.lock() else { return 0 };
+    let map = guard.get_or_insert_with(HashMap::new);
+    match map.get(id) {
+        Some((b, since)) if *b == bytes => now.duration_since(*since).as_secs(),
+        _ => {
+            map.insert(id.to_string(), (bytes, now));
+            0
+        }
     }
 }
 
@@ -428,6 +455,18 @@ mod tests {
         assert_eq!(phase(733_500_000, 267_100_000, 732_390_457), "downloading");
         // Unknown size never claims to be verifying.
         assert_eq!(phase(10, 0, 0), "downloading");
+    }
+
+    #[test]
+    fn unchanged_bytes_are_timed() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + std::time::Duration::from_secs(s);
+        assert_eq!(seconds_unchanged("t:stall:x", 5, at(0)), 0);
+        assert_eq!(seconds_unchanged("t:stall:x", 5, at(30)), 30);
+        assert_eq!(seconds_unchanged("t:stall:x", 5, at(61)), 61);
+        // Bytes moving again resets the clock.
+        assert_eq!(seconds_unchanged("t:stall:x", 6, at(62)), 0);
+        assert_eq!(seconds_unchanged("t:stall:x", 6, at(70)), 8);
     }
 
     #[test]
