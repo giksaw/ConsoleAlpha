@@ -434,9 +434,11 @@ impl InstallStatus {
     }
 }
 
-/// A chunk-state file: depot id, finished chunks, when it was last written.
+/// A chunk-state file: depot, the manifest being downloaded, finished chunks,
+/// and when it was last written.
 struct PatchFile {
     depot: u32,
+    manifest: Option<u64>,
     chunks_done: u64,
     modified: chrono::NaiveDateTime,
 }
@@ -461,8 +463,19 @@ fn patch_files(libraries: &[PathBuf], app: u32) -> Vec<PatchFile> {
                 .ok()
                 .map(|t| chrono::DateTime::<chrono::Local>::from(t).naive_local())
                 .unwrap_or_default();
-            // 24-byte header (format tag + manifest id), then 24 bytes per chunk.
-            out.push(PatchFile { depot, chunks_done: meta.len().saturating_sub(24) / 24, modified });
+            // 24-byte header ("MO42", 4 zero bytes, manifest id, ...), then 24
+            // bytes per finished chunk.
+            let manifest = fs::File::open(entry.path()).ok().and_then(|mut f| {
+                let mut head = [0u8; 16];
+                f.read_exact(&mut head).ok()?;
+                Some(u64::from_le_bytes(head[8..16].try_into().unwrap()))
+            });
+            out.push(PatchFile {
+                depot,
+                manifest,
+                chunks_done: meta.len().saturating_sub(24) / 24,
+                modified,
+            });
         }
     }
     out
@@ -476,6 +489,8 @@ struct AppLog {
     phase: String,
     /// Download and stage byte totals from the last "update started" line.
     download_total: Option<u64>,
+    /// Bytes already downloaded when the last attempt started (non-zero on a resume).
+    download_done_at_start: Option<u64>,
     stage_total: Option<u64>,
     started_at: Option<chrono::NaiveDateTime>,
     /// Reason from the last "update canceled" line after the last start.
@@ -485,8 +500,10 @@ struct AppLog {
 #[derive(Default, Debug)]
 struct ContentLog {
     apps: HashMap<u32, AppLog>,
-    /// Chunks to download per depot ("Downloading N chunks for depot D").
-    depot_chunks: HashMap<u32, u64>,
+    /// Chunks to download per (depot, manifest), from "Downloading N chunks for
+    /// depot D (M)". A retry can log only the chunks still missing, so the
+    /// largest count seen for a manifest is the total.
+    depot_chunks: HashMap<(u32, u64), u64>,
     /// Last reported download rate (bytes/s) and when.
     rate: Option<(f64, chrono::NaiveDateTime)>,
 }
@@ -530,13 +547,15 @@ fn parse_content_log(text: &str) -> ContentLog {
         if let Some(rest) = msg.strip_prefix("Downloading ") {
             let mut words = rest.split_whitespace();
             let chunks = words.next().and_then(|w| w.parse::<u64>().ok());
-            let depot = rest
-                .split("for depot ")
-                .nth(1)
-                .and_then(|s| s.split_whitespace().next())
-                .and_then(|s| s.parse::<u32>().ok());
+            let mut tail = rest.split("for depot ").nth(1).unwrap_or("").split_whitespace();
+            let depot = tail.next().and_then(|s| s.parse::<u32>().ok());
+            let manifest = tail
+                .next()
+                .and_then(|s| s.trim_matches(|c| c == '(' || c == ')').parse::<u64>().ok())
+                .unwrap_or(0);
             if let (Some(c), Some(d)) = (chunks, depot) {
-                log.depot_chunks.insert(d, c);
+                let total = log.depot_chunks.entry((d, manifest)).or_insert(0);
+                *total = (*total).max(c);
             }
             continue;
         }
@@ -552,6 +571,7 @@ fn parse_content_log(text: &str) -> ContentLog {
         } else if let Some(totals) = event.strip_prefix("update started : ") {
             // "download 0/87910304, store 0/0, reuse 0/0, delta 0/0, stage 0/857256652"
             entry.download_total = field_total(totals, "download");
+            entry.download_done_at_start = field_done(totals, "download");
             entry.stage_total = field_total(totals, "stage");
             entry.started_at = Some(time);
             entry.canceled = None;
@@ -564,11 +584,16 @@ fn parse_content_log(text: &str) -> ContentLog {
 
 /// The total from "<name> done/total" in an "update started" line.
 fn field_total(totals: &str, name: &str) -> Option<u64> {
-    totals.split(',').find_map(|part| {
-        let part = part.trim();
-        let rest = part.strip_prefix(name)?.trim();
-        rest.split_once('/')?.1.trim().parse().ok()
-    })
+    field_pair(totals, name)?.1.split_whitespace().next()?.parse().ok()
+}
+
+/// The done part of "<name> done/total".
+fn field_done(totals: &str, name: &str) -> Option<u64> {
+    field_pair(totals, name)?.0.trim().parse().ok()
+}
+
+fn field_pair<'a>(totals: &'a str, name: &str) -> Option<(&'a str, &'a str)> {
+    totals.split(',').find_map(|part| part.trim().strip_prefix(name)?.trim().split_once('/'))
 }
 
 fn status_for(
@@ -619,7 +644,7 @@ fn status_for(
         } else {
             return s; // nothing in progress
         }
-        s.progress = chunk_fraction(patches, log);
+        s.progress = at_least(chunk_fraction(patches, log), resume_floor(app));
         s.bytes_done = done_bytes(s.progress, s.bytes_total);
         return s;
     }
@@ -670,8 +695,25 @@ fn status_for(
         }
         _ => checkpoint,
     });
+    s.progress = at_least(s.progress, resume_floor(app));
     s.bytes_done = done_bytes(s.progress, s.bytes_total);
     s
+}
+
+/// On a resume, "update started : download a/b" says how much was already
+/// there: a real figure, unlike the extrapolation.
+fn resume_floor(app: &AppLog) -> Option<f64> {
+    match (app.download_done_at_start, app.download_total) {
+        (Some(done), Some(total)) if total > 0 && done > 0 => Some((done as f64 / total as f64).min(0.99)),
+        _ => None,
+    }
+}
+
+fn at_least(value: Option<f64>, floor: Option<f64>) -> Option<f64> {
+    match (value, floor) {
+        (Some(v), Some(f)) => Some(v.max(f)),
+        (v, f) => v.or(f),
+    }
 }
 
 /// How many chunks Steam writes to the chunk file at a time (observed: the
@@ -683,7 +725,15 @@ fn chunk_counts(patches: &[PatchFile], log: &ContentLog) -> Option<(u64, u64)> {
     let mut done = 0u64;
     let mut total = 0u64;
     for p in patches {
-        let t = *log.depot_chunks.get(&p.depot)?;
+        let t = match p.manifest {
+            Some(m) => *log.depot_chunks.get(&(p.depot, m))?,
+            None => log
+                .depot_chunks
+                .iter()
+                .filter(|((d, _), _)| *d == p.depot)
+                .map(|(_, &n)| n)
+                .max()?,
+        };
         done += p.chunks_done.min(t);
         total += t;
     }
@@ -807,9 +857,14 @@ mod tests {
         let app = log.apps.get(&3419430).unwrap();
         assert_eq!(app.download_total, Some(87_910_304));
         assert_eq!(app.stage_total, Some(857_256_652));
-        assert_eq!(log.depot_chunks.get(&3419431), Some(&985));
+        assert_eq!(log.depot_chunks.get(&(3419431, 538652396572221049)), Some(&985));
 
-        let patches = [PatchFile { depot: 3419431, chunks_done: 197, modified: t("2026-11-24 14:45:00") }];
+        let patches = [PatchFile {
+            depot: 3419431,
+            manifest: Some(538652396572221049),
+            chunks_done: 197,
+            modified: t("2026-11-24 14:45:00"),
+        }];
         // 197/985 = 20%, plus 3 s at 1 MB/s of an 87.9 MB download.
         let s = status_for("3419430", Some(app), &log, &patches, false, t("2026-11-24 14:45:03"));
         assert_eq!(s.state, "downloading");
@@ -858,5 +913,34 @@ mod tests {
 
         let s = status_for("70", None, &log, &[], false, t("2026-11-24 14:41:00"));
         assert_eq!(s.state, "none");
+    }
+
+    #[test]
+    fn resume_keeps_full_chunk_total_and_byte_floor() {
+        // A retry logs only the chunks still missing ("1 chunks"); the total
+        // stays the largest count for that manifest. The restart line also
+        // says 60% of the bytes were already there.
+        let resumed = format!(
+            "{LOG}[2026-11-24 15:00:00] AppID 3419430 update canceled : Disabled (Suspended)\n\
+             [2026-11-24 15:01:00] AppID 3419430 update started : download 52746182/87910304, store 0/0, reuse 0/0, delta 0/0, stage 0/857256652 \n\
+             [2026-11-24 15:01:00] AppID 3419430 state changed : Update Required,Update Queued,Update Running,Update Started,\n\
+             [2026-11-24 15:01:00] AppID 3419430 App update changed : Running Update,Downloading,Staging,\n\
+             [2026-11-24 15:01:00] Downloading 1 chunks for depot 3419431 (538652396572221049)\n"
+        );
+        let log = parse_content_log(&resumed);
+        assert_eq!(log.depot_chunks.get(&(3419431, 538652396572221049)), Some(&985));
+        let app = log.apps.get(&3419430).unwrap();
+        assert_eq!(app.download_done_at_start, Some(52_746_182));
+
+        let patches = [PatchFile {
+            depot: 3419431,
+            manifest: Some(538652396572221049),
+            chunks_done: 197,
+            modified: t("2026-11-24 14:59:00"),
+        }];
+        let s = status_for("3419430", Some(app), &log, &patches, false, t("2026-11-24 15:01:05"));
+        assert_eq!(s.state, "downloading");
+        let p = s.progress.unwrap();
+        assert!((p - 0.6).abs() < 1e-6, "floor from the resume line, not 197 of 1 chunk: {p}");
     }
 }

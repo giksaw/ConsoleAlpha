@@ -864,11 +864,24 @@ function steamPageOpen() {
   return currentPage === "lib" && currentFilter === "Steam" && settings.show_owned_games && ownedGames.length > 0;
 }
 
-function scheduleInstallPoll(delay = 2000) {
+// Installs that are moving (or that Steam hasn't picked up yet after our
+// click) are polled every 2 s; paused or queued ones only every 30 s, so an
+// old paused download can't keep the app busy for ever.
+const MOVING_INSTALL = new Set(["preparing", "downloading", "verifying", "installing"]);
+
+function installMoving() {
+  for (const id of installWatch.keys()) {
+    const st = installStatus.get(id);
+    if (!st || !ACTIVE_INSTALL.has(st.state) || MOVING_INSTALL.has(st.state)) return true;
+  }
+  return false;
+}
+
+function scheduleInstallPoll(delay) {
   clearTimeout(installTimer);
   installTimer = 0;
   if (!isTauri || (!installWatch.size && !steamPageOpen())) return;
-  installTimer = setTimeout(pollInstalls, delay);
+  installTimer = setTimeout(pollInstalls, delay ?? (installMoving() ? 2000 : 30000));
 }
 
 async function pollInstalls() {
@@ -895,7 +908,10 @@ async function applyInstallStatuses(statuses) {
     const id = st.app_id;
     installStatus.set(id, st);
     if (ACTIVE_INSTALL.has(st.state)) {
-      if (!installWatch.has(id)) installWatch.set(id, { since: Date.now(), baseline: null });
+      // Follow downloads started in Steam itself, but only once they move.
+      if (!installWatch.has(id) && MOVING_INSTALL.has(st.state)) {
+        installWatch.set(id, { since: Date.now(), baseline: null });
+      }
       if (st.progress != null) shownProgress.set(id, Math.max(shownProgress.get(id) || 0, st.progress));
     }
     const w = installWatch.get(id);
