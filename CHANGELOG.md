@@ -375,6 +375,31 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 8 — Game Folders: Auto-detect Local Games (Nov 24, 2026)
+
+### Backend Changes
+| File | Change |
+|---|---|
+| `src-tauri/src/services/game_folders.rs` | **New** — game folders saved in `game_folders.json`: watched folders, the 30-minute switch, and every subfolder the user answered (`added` / `ignored`). `candidates()` offers direct subfolders that aren't in the library, skipping answered, hidden/system and launcher-library folders (`SteamLibrary`, `Epic Games`…), folders with no exe yet, and anything created or changed in the last 60 s (still copying) — those are re-checked later, not marked seen |
+| `src-tauri/src/commands/game_folders.rs` | **New** commands: `get/add/remove_game_folder(s)`, `set_game_folders_periodic`, `mark_game_folders`, `reset_ignored_folders`, `check_game_folders(known_paths)` (custom-game paths from the frontend + store games from the saved library), and native `pick_folder` / `pick_executable` |
+| `src-tauri/src/scanners/common.rs` | `list_executables()` returns the ranked exe list (`guess_executable` now uses it); **new** `clean_title()` turns `Hades_v1.38 [GOG]` into `Hades` |
+| `src-tauri/src/lib.rs`, `Cargo.toml` | Added `tauri-plugin-dialog` (used from Rust only, so no capability file is needed) |
+
+### Frontend Changes
+- **Sources & settings → Game folders:** add/remove folders, *Check now*, "N ignored · Suggest again", and *Check every 30 minutes* (on by default).
+- **Checks on launch** (after the store scan, so fresh store installs aren't offered) and every 30 minutes while running, including in the tray.
+- **One new game → popup** (name, exe picker, Ignore / Not now / Add game), shown only while the window is in front and nothing else is open — otherwise it waits behind a banner and opens when the window regains focus. **Several → banner** that opens a checklist; unticked games are ignored. *Not now* (or Escape) snoozes until the next launch.
+- Detected games are custom games whose install folder is the game folder itself, so *Open install folder* and the size cover the whole game.
+- **Add game → Browse** now uses the native file picker; the webview file input only gave the file name, not the full path.
+- Custom-game ids get a counter suffix so games added in the same millisecond can't collide.
+
+### Verification
+- 4 new unit tests (`clean_title`, `list_executables`, candidate filtering, config round-trip); 19 total pass.
+- Real app (debug build, isolated WebView2 profile, driven over CDP): launch check → banner → checklist; untick/rename/exe choice saved correctly; ignored count + *Suggest again*; single popup Ignore / Not now / Escape; popup held while unfocused and shown on focus; 30-minute switch persists. `C:\Games` dry run found its one game in 45 ms.
+- **Not verified:** the native folder/exe pickers (can't be driven over CDP) and a real 30-minute timer tick.
+
+---
+
 ## Known Issues
 - **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
 - **SteamGridDB response parsing is untested with a real key** — the field names (`data[].id/name/url`) follow the API docs.

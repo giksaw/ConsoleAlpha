@@ -1,3 +1,5 @@
+pub mod game_folders;
+
 use crate::models::{CoverSuggestion, DetectedStore, GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;

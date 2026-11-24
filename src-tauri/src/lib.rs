@@ -10,6 +10,7 @@ use std::sync::Mutex;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Library cache, favorites and store config live in the per-user app
             // data dir (%APPDATA%\com.giksaw.gameconsolealpha). It used to be %TEMP%,
@@ -38,6 +39,15 @@ pub fn run() {
             commands::search_steamgriddb_covers,
             commands::get_game_size,
             commands::detect_stores,
+            commands::game_folders::get_game_folders,
+            commands::game_folders::add_game_folder,
+            commands::game_folders::remove_game_folder,
+            commands::game_folders::set_game_folders_periodic,
+            commands::game_folders::mark_game_folders,
+            commands::game_folders::reset_ignored_folders,
+            commands::game_folders::check_game_folders,
+            commands::game_folders::pick_folder,
+            commands::game_folders::pick_executable,
             tray::set_keep_in_tray,
         ])
         .run(tauri::generate_context!())

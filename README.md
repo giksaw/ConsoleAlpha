@@ -19,6 +19,7 @@ Game Console Alpha doesn't sell, download or install games, and it doesn't colle
 
 - **Multi-store library** — Scans Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar Games
 - **Custom games** — Manually add executables for games not in a store library
+- **Game folders** — Pick the folders you keep games in (e.g. `C:\Games`); new game folders there are offered for your library on launch (and every 30 minutes, optionally), and only added once you confirm
 - **Grid & list views** — Switch between a visual grid and a detailed table view
 - **Search & sort** — Filter by name, sort by recently played or A-Z
 - **Recently played** — Uses Steam's own last-played time, plus every launch made from Game Console Alpha
@@ -144,7 +145,7 @@ store's own art. For games that aren't on Steam, add a free
 
 | Data                                   | Location                                  |
 | -------------------------------------- | ----------------------------------------- |
-| Library cache, favorites, store toggles | `%APPDATA%\com.giksaw.gameconsolealpha\*.json` |
+| Library cache, favorites, store toggles, game folders | `%APPDATA%\com.giksaw.gameconsolealpha\*.json` |
 | Custom games, settings (incl. SteamGridDB key), statuses, hidden games, last launches, cover lookups, install sizes | WebView `localStorage` (`cabinet_*` keys) |
 | Custom cover images                    | WebView IndexedDB (`cabinet` → `covers`)  |
 

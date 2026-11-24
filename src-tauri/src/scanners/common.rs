@@ -155,8 +155,7 @@ pub fn folder_name(path: &Path) -> String {
 
 /// Best guess at a game's main executable inside its install folder.
 ///
-/// Prefers `<name>.exe`, then the largest .exe within a few levels that isn't
-/// an installer, uninstaller, crash reporter or redistributable.
+/// Prefers `<name>.exe`, then the best entry from [`list_executables`].
 pub fn guess_executable(dir: &Path, game_name: &str) -> Option<PathBuf> {
     if !dir.is_dir() {
         return None;
@@ -165,13 +164,22 @@ pub fn guess_executable(dir: &Path, game_name: &str) -> Option<PathBuf> {
     if direct.is_file() {
         return Some(direct);
     }
+    list_executables(dir, 1).into_iter().next()
+}
 
+/// The likely game executables within a few levels of `dir`, best first:
+/// largest first, shallower first on a tie. Installers, uninstallers, crash
+/// reporters and redistributables are left out. Returns at most `limit`.
+pub fn list_executables(dir: &Path, limit: usize) -> Vec<PathBuf> {
     const SKIP: &[&str] = &[
         "unins", "uninstall", "setup", "install", "crash", "report", "redist", "vcredist",
         "vc_redist", "dxsetup", "dotnet", "directx", "ue4prereq", "easyanticheat", "be_service",
         "battleye", "cleanup", "touchup", "activation", "helper", "updater",
     ];
-    let mut best: Option<(u64, usize, PathBuf)> = None;
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let mut found: Vec<(u64, usize, PathBuf)> = Vec::new();
     for entry in walkdir::WalkDir::new(dir)
         .max_depth(4)
         .into_iter()
@@ -196,17 +204,68 @@ pub fn guess_executable(dir: &Path, game_name: &str) -> Option<PathBuf> {
             continue;
         }
         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let depth = entry.depth();
-        // Shallower wins over bigger only when sizes are comparable.
-        let better = match &best {
-            None => true,
-            Some((bsize, bdepth, _)) => size > *bsize || (size == *bsize && depth < *bdepth),
-        };
-        if better {
-            best = Some((size, depth, path.to_path_buf()));
+        found.push((size, entry.depth(), path.to_path_buf()));
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    found.into_iter().take(limit).map(|(_, _, p)| p).collect()
+}
+
+/// A readable game title from a folder name: `Hades_v1.38 [GOG]` → `Hades`,
+/// `Hollow.Knight.v1.5` → `Hollow Knight`. Only a default; the user can edit it.
+pub fn clean_title(folder: &str) -> String {
+    // Drop bracketed tags: [GOG], (2019), {Repack}.
+    let mut s = String::new();
+    let mut depth = 0usize;
+    for c in folder.chars() {
+        match c {
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => s.push(c),
+            _ => {}
         }
     }
-    best.map(|(_, _, p)| p)
+    // Drop a trailing version ("v1.38", "1.0.2") or build number ("Build 1234").
+    loop {
+        let cut = (1..s.len()).find(|&i| {
+            s.is_char_boundary(i)
+                && matches!(s.as_bytes()[i - 1], b' ' | b'_' | b'.' | b'-')
+                && is_version_suffix(&s[i..])
+        });
+        match cut {
+            Some(i) => s.truncate(i - 1),
+            None => break,
+        }
+    }
+    let mut s = s.replace('_', " ");
+    // Scene-style names use dots for spaces; initialisms like S.T.A.L.K.E.R don't.
+    if !s.contains(' ') && s.split('.').any(|part| part.chars().count() > 1) && s.contains('.') {
+        s = s.replace('.', " ");
+    }
+    let title = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = title.trim_matches(|c: char| c == '-' || c.is_whitespace()).to_string();
+    if title.is_empty() {
+        folder.trim().to_string()
+    } else {
+        title
+    }
+}
+
+/// `v1.38`, `1.0.2`, `v2` or `build 1234` (case-insensitive), and nothing else.
+fn is_version_suffix(rest: &str) -> bool {
+    let rest = rest.trim().to_ascii_lowercase();
+    if let Some(num) = rest.strip_prefix("build") {
+        let num = num.trim_start_matches([' ', '_', '.', '-']);
+        return !num.is_empty() && num.chars().all(|c| c.is_ascii_digit());
+    }
+    let (had_v, body) = match rest.strip_prefix('v') {
+        Some(b) => (true, b),
+        None => (false, rest.as_str()),
+    };
+    !body.is_empty()
+        && body.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && body.starts_with(|c: char| c.is_ascii_digit())
+        && body.ends_with(|c: char| c.is_ascii_digit())
+        && (had_v || body.contains('.'))
 }
 
 /// Build a `GameEntry` for a launcher-installed game.
@@ -312,5 +371,40 @@ mod tests {
         assert_eq!(icon_exe(r"C:\Windows\System32\shell32.dll,4"), None);
         let notepad = r"C:\Windows\System32\notepad.exe,0";
         assert_eq!(icon_exe(notepad), Some(PathBuf::from(r"C:\Windows\System32\notepad.exe")));
+    }
+
+    #[test]
+    fn clean_title_strips_tags_and_versions() {
+        assert_eq!(clean_title("Hades_v1.38 [GOG]"), "Hades");
+        assert_eq!(clean_title("Hollow.Knight.v1.5"), "Hollow Knight");
+        assert_eq!(clean_title("Celeste (2018)"), "Celeste");
+        assert_eq!(clean_title("Some Game 1.0.2"), "Some Game");
+        assert_eq!(clean_title("Some_Game_Build_1234"), "Some Game");
+        assert_eq!(clean_title("Some Game - v2"), "Some Game");
+        // Sequel numbers and initialisms are part of the title.
+        assert_eq!(clean_title("Portal 2"), "Portal 2");
+        assert_eq!(clean_title("Half-Life 2"), "Half-Life 2");
+        assert_eq!(clean_title("S.T.A.L.K.E.R"), "S.T.A.L.K.E.R");
+        assert_eq!(clean_title("Mr. Shifty"), "Mr. Shifty");
+        // Never return an empty title.
+        assert_eq!(clean_title("[GOG]"), "[GOG]");
+    }
+
+    #[test]
+    fn list_executables_ranks_and_skips_installers() {
+        let dir = std::env::temp_dir().join(format!("gca-exe-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        fs::create_dir_all(dir.join("_CommonRedist")).unwrap();
+        fs::write(dir.join("launcher.exe"), vec![0u8; 10]).unwrap();
+        fs::write(dir.join("bin").join("game.exe"), vec![0u8; 100]).unwrap();
+        fs::write(dir.join("unins000.exe"), vec![0u8; 500]).unwrap();
+        fs::write(dir.join("_CommonRedist").join("big.exe"), vec![0u8; 900]).unwrap();
+        fs::write(dir.join("readme.txt"), b"hi").unwrap();
+        let found = list_executables(&dir, 10);
+        assert_eq!(found, vec![dir.join("bin").join("game.exe"), dir.join("launcher.exe")]);
+        assert_eq!(guess_executable(&dir, "nope"), Some(dir.join("bin").join("game.exe")));
+        assert_eq!(guess_executable(&dir, "launcher"), Some(dir.join("launcher.exe")));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

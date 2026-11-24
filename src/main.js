@@ -33,6 +33,13 @@ let storeConfig = {
 };
 let detectedStores = []; // [{ id, name, path, installed }] from the backend
 
+// Game folders: folders the user keeps games in. New subfolders are offered as games.
+let gameFolders = { folders: [], check_periodically: true }; // from the backend
+let foundGames = [];              // [{ folder, parent, title, exes }] not answered yet
+let foundShown = [];              // the games in the open "new games" dialog
+const snoozedFolders = new Set(); // "Not now": don't offer again until next launch
+const FOLDER_CHECK_MS = 30 * 60 * 1000;
+
 // Custom cover art, keyed by game id (persisted in IndexedDB, cached in memory
 // so rendering stays synchronous).
 const coverOverrides = new Map();
@@ -55,6 +62,8 @@ const scrimEl = $("#scrim");
 const panelEl = $("#panel");
 const dlgEl = $("#dlg");
 const covDlgEl = $("#covdlg");
+const fndEl = $("#fnd");
+const foundBarEl = $("#found");
 const menuEl = $("#menu");
 const padEl = $("#pad");
 
@@ -919,6 +928,22 @@ function renderSettings() {
       }).join("")
     : "";
 
+  const gameFolderRows = !isTauri
+    ? `<div class="src"><span style="grid-column:1/-1">Game folders need the desktop app.</span></div>`
+    : gameFolders.folders.length
+      ? gameFolders.folders.map((f) => {
+          const status = !f.exists
+            ? "Folder not found. Is the drive connected?"
+            : f.ignored
+              ? `${f.ignored} ignored folder${f.ignored === 1 ? "" : "s"} · <a href="#" data-gf-reset="${esc(f.path)}">Suggest again</a>`
+              : "Watching for new games";
+          return `<div class="src"><div><b style="word-break:break-all">${esc(f.path)}</b></div>
+            <button class="btn o" data-gf-remove="${esc(f.path)}">Remove</button>
+            <span style="grid-column:1/-1">${status}</span>
+          </div>`;
+        }).join("")
+      : `<div class="src"><span style="grid-column:1/-1">No game folders yet. Add the folder you install games into, like D:\\Games.</span></div>`;
+
   const tg = (key, n, d, v) => `<div class="src"><div><b>${n}</b></div><button class="tg ${v ? "on" : ""}" data-setting="${key}" aria-pressed="${v}" aria-label="${n}"></button><span style="grid-column:1/-1">${d}</span></div>`;
 
   scrollEl.innerHTML = `<div class="sec">
@@ -926,6 +951,10 @@ function renderSettings() {
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><span style="color:var(--mute)">${games.length} games across ${STORE_CATALOG.filter((s) => enabledStores[s.id] !== false).length} enabled launchers</span><button class="btn" id="rescan">Rescan now</button></div>
     ${STORE_CATALOG.map(srcRow).join("")}
     ${hiddenSection}
+    <h2>Game folders</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><span style="color:var(--mute)">New games in these folders are offered when the app starts.</span><div style="display:flex;gap:8px"><button class="btn o" id="gf-check">Check now</button><button class="btn" id="gf-add">Add folder</button></div></div>
+    ${gameFolderRows}
+    <div class="src"><div><b>Check every 30 minutes</b></div><button class="tg ${gameFolders.check_periodically ? "on" : ""}" data-gf-periodic aria-pressed="${!!gameFolders.check_periodically}" aria-label="Check every 30 minutes"></button><span style="grid-column:1/-1">Also checks while Game Console Alpha is open, including in the tray.</span></div>
     <h2>Behavior</h2>
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
@@ -1025,6 +1054,7 @@ function openPanel(game) {
 }
 
 function closePanel() {
+  if (fndEl.classList.contains("on")) foundNotNow();
   panelEl.classList.remove("on");
   scrimEl.classList.remove("on");
   dlgEl.classList.remove("on");
@@ -1078,17 +1108,15 @@ async function suggestArtwork() {
     </button>`).join("");
 }
 
-function addGameFromDialog() {
-  const exe = $("#dlg-exe").value.trim();
-  const name = $("#dlg-name").value.trim();
-  const args = $("#dlg-args").value.trim();
-  const art = ($("#dlg-art")?.value || "").trim();
-  if (!exe || !name) { toast("Please fill in executable and name"); return; }
+// Add a local game to customGames (the caller saves). The install folder
+// defaults to the executable's folder.
+let customSeq = 0;
+function createCustomGame({ exe, name, args = "", art = "", installPath = "" }) {
   const game = {
-    id: "custom-" + Date.now(),
+    id: `custom-${Date.now()}-${customSeq++}`,
     name,
     description: null,
-    install_path: exe.replace(/[^\\/]+$/, ""),
+    install_path: installPath || exe.replace(/[^\\/]+$/, ""),
     executable_path: exe,
     launch_command: args ? exe + " " + args : exe,
     cover_image_path: art || null,
@@ -1098,6 +1126,16 @@ function addGameFromDialog() {
     is_installed: true,
   };
   customGames.push(game);
+  return game;
+}
+
+function addGameFromDialog() {
+  const exe = $("#dlg-exe").value.trim();
+  const name = $("#dlg-name").value.trim();
+  const args = $("#dlg-args").value.trim();
+  const art = ($("#dlg-art")?.value || "").trim();
+  if (!exe || !name) { toast("Please fill in executable and name"); return; }
+  createCustomGame({ exe, name, args, art });
   saveCustomGames();
   closeDialog();
   toast("Added " + name);
@@ -1110,6 +1148,236 @@ function removeCustomGame(game) {
   saveCustomGames();
   toast("Removed " + game.name);
   renderAll();
+}
+
+// The add-game "Browse" button. In the desktop app this uses the native picker:
+// a webview file input only reveals the file name, not its full path.
+async function browseExecutable() {
+  if (!isTauri) { $("#dlg-file").click(); return; }
+  try {
+    const exe = await invoke("pick_executable");
+    if (exe) $("#dlg-exe").value = exe;
+  } catch (e) {
+    console.error("File picker failed:", e);
+    toast("Couldn't open the file picker");
+  }
+}
+
+// ── Game folders ─────────────────────────────────────────────────────────────
+async function loadGameFolders() {
+  if (!isTauri) return;
+  try { gameFolders = await invoke("get_game_folders"); } catch { /* ignore */ }
+}
+
+// Custom games live here, not in the backend, so it gets their paths from us.
+function customGamePaths() {
+  return customGames.flatMap((g) => [g.install_path, g.executable_path]).filter(Boolean);
+}
+
+// Look for new games in the game folders. With { manual: true } (Check now, or
+// right after adding a folder) results open at once and "nothing found" is said.
+let folderCheckRunning = false;
+async function checkGameFolders({ manual = false } = {}) {
+  if (!isTauri || folderCheckRunning) return;
+  if (!gameFolders.folders.length) {
+    if (manual) toast("Add a game folder first");
+    return;
+  }
+  folderCheckRunning = true;
+  try {
+    const found = await invoke("check_game_folders", { knownPaths: customGamePaths() });
+    const list = Array.isArray(found) ? found : [];
+    if (manual) list.forEach((c) => snoozedFolders.delete(c.folder));
+    foundGames = list.filter((c) => !snoozedFolders.has(c.folder));
+    if (manual && !foundGames.length) {
+      toast("No new games found. Folders changed in the last minute are checked later.");
+    }
+    if (manual && foundGames.length && !overlayOpen()) openFoundDialog(foundGames);
+    else presentFoundGames();
+  } catch (e) {
+    console.error("Folder check failed:", e);
+    if (manual) toast("Couldn't check your game folders");
+  } finally {
+    folderCheckRunning = false;
+  }
+}
+
+function overlayOpen() {
+  return [dlgEl, covDlgEl, fndEl, panelEl, padEl].some((el) => el.classList.contains("on"));
+}
+
+// One new game is asked about in a popup, but only while the window is in
+// front and nothing else is open, so it never lands mid-game. Several games
+// (or a popup that has to wait) get a banner that opens the checklist.
+function presentFoundGames() {
+  renderFoundBanner();
+  const inFront = !document.hidden && document.hasFocus();
+  if (foundGames.length === 1 && inFront && !overlayOpen()) openFoundDialog(foundGames);
+}
+
+function renderFoundBanner() {
+  const n = foundGames.length;
+  if (!n || fndEl.classList.contains("on")) {
+    foundBarEl.classList.remove("on");
+    foundBarEl.innerHTML = "";
+    return;
+  }
+  const text = n === 1
+    ? `New game found in your game folders: <b>${esc(foundGames[0].title)}</b>`
+    : `<b>${n} new games</b> found in your game folders`;
+  foundBarEl.innerHTML = `<span>${text}</span>
+    <button class="btn" id="found-review">Review</button>
+    <button class="btn o" id="found-later">Not now</button>`;
+  foundBarEl.classList.add("on");
+}
+
+// `D:\Games\Hades\bin\Hades.exe` is shown as `bin\Hades.exe` under its folder.
+function relativeToFolder(folder, path) {
+  const f = folder.replace(/[\\/]+$/, "");
+  return path.toLowerCase().startsWith(f.toLowerCase())
+    ? path.slice(f.length).replace(/^[\\/]+/, "")
+    : path;
+}
+
+function openFoundDialog(list) {
+  if (!list.length) return;
+  foundShown = list.slice();
+  const exeOptions = (c) => c.exes
+    .map((x, i) => `<option value="${i}">${esc(relativeToFolder(c.folder, x))}</option>`)
+    .join("");
+  if (foundShown.length === 1) {
+    const c = foundShown[0];
+    fndEl.innerHTML = `<h3>New game found</h3>
+      <span style="color:var(--mute)">In ${esc(c.parent)}. Add it to your library?</span>
+      <label class="fld">Name<div class="in"><input data-fnd-name="0" value="${esc(c.title)}"></div></label>
+      <label class="fld">Executable<div class="in"><select class="sel" data-fnd-exe="0">${exeOptions(c)}</select></div></label>
+      <span class="fndp">${esc(c.folder)}</span>
+      <div class="dacts"><button class="btn o" id="fnd-ignore">Ignore</button><button class="btn o" id="fnd-later">Not now</button><button class="btn" id="fnd-add">Add game</button></div>`;
+  } else {
+    fndEl.innerHTML = `<h3>${foundShown.length} new games found</h3>
+      <span style="color:var(--mute)">Tick the ones to add. Unticked folders won't be suggested again.</span>
+      <div class="fndlist">${foundShown.map((c, i) => `
+        <div class="fndrow">
+          <input type="checkbox" data-fnd-pick="${i}" checked aria-label="Add ${esc(c.title)}">
+          <div class="fndf">
+            <input data-fnd-name="${i}" value="${esc(c.title)}" aria-label="Name">
+            <select class="sel" data-fnd-exe="${i}" aria-label="Executable for ${esc(c.title)}">${exeOptions(c)}</select>
+            <span class="fndp">${esc(c.folder)}</span>
+          </div>
+        </div>`).join("")}</div>
+      <div class="dacts"><button class="btn o" id="fnd-later">Not now</button><button class="btn" id="fnd-add">Add selected</button></div>`;
+  }
+  fndEl.classList.add("on");
+  scrimEl.classList.add("on");
+  renderFoundBanner();
+}
+
+function closeFoundDialog() {
+  fndEl.classList.remove("on");
+  if (!panelEl.classList.contains("on")) scrimEl.classList.remove("on");
+  foundShown = [];
+  renderFoundBanner();
+}
+
+// Drop answered folders from the pending list.
+function forgetFound(folders) {
+  const done = new Set(folders);
+  foundGames = foundGames.filter((c) => !done.has(c.folder));
+}
+
+async function markFolders(folders, status) {
+  if (!folders.length) return;
+  try { gameFolders = await invoke("mark_game_folders", { folders, status }); }
+  catch (e) { console.error("Couldn't save folder answer:", e); }
+}
+
+async function addFoundGames() {
+  const single = foundShown.length === 1;
+  const picked = [];
+  const skipped = [];
+  foundShown.forEach((c, i) => {
+    const ticked = single || fndEl.querySelector(`[data-fnd-pick="${i}"]`)?.checked;
+    if (!ticked) { skipped.push(c.folder); return; }
+    const name = (fndEl.querySelector(`[data-fnd-name="${i}"]`)?.value || "").trim() || c.title;
+    const exe = c.exes[Number(fndEl.querySelector(`[data-fnd-exe="${i}"]`)?.value) || 0] || c.exes[0];
+    picked.push({ folder: c.folder, name, exe });
+  });
+  if (!picked.length) { toast("Tick at least one game, or choose Not now"); return; }
+  // The game folder (not the exe's subfolder) is the install folder, so
+  // "Open install folder" and the size cover the whole game.
+  for (const p of picked) createCustomGame({ exe: p.exe, name: p.name, installPath: p.folder });
+  saveCustomGames();
+  await markFolders(picked.map((p) => p.folder), "added");
+  await markFolders(skipped, "ignored");
+  forgetFound([...picked.map((p) => p.folder), ...skipped]);
+  closeFoundDialog();
+  toast(picked.length === 1 ? `Added ${picked[0].name}` : `Added ${picked.length} games`);
+  renderAll();
+}
+
+async function ignoreFoundGame() {
+  const c = foundShown[0];
+  if (!c) return;
+  await markFolders([c.folder], "ignored");
+  forgetFound([c.folder]);
+  closeFoundDialog();
+  toast(`Won't suggest ${c.title} again`);
+  if (currentPage === "set") renderSettings();
+}
+
+// "Not now": leave it until the next launch (or Check now).
+function foundNotNow() {
+  const list = foundShown.length ? foundShown : foundGames;
+  list.forEach((c) => snoozedFolders.add(c.folder));
+  forgetFound(list.map((c) => c.folder));
+  closeFoundDialog();
+}
+
+async function addGameFolder() {
+  if (!isTauri) { toast("Game folders need the desktop app"); return; }
+  try {
+    const path = await invoke("pick_folder", { title: "Choose a folder you keep games in" });
+    if (!path) return;
+    gameFolders = await invoke("add_game_folder", { path });
+    if (currentPage === "set") renderSettings();
+    await checkGameFolders({ manual: true });
+  } catch (e) {
+    console.error("Add game folder failed:", e);
+    toast(typeof e === "string" ? e : "Couldn't add that folder");
+  }
+}
+
+async function removeGameFolder(path) {
+  try {
+    gameFolders = await invoke("remove_game_folder", { path });
+    const key = path.replace(/[\\/]+$/, "").toLowerCase();
+    foundGames = foundGames.filter((c) => c.parent.replace(/[\\/]+$/, "").toLowerCase() !== key);
+    renderFoundBanner();
+    toast("Game folder removed");
+    renderSettings();
+  } catch (e) {
+    console.error("Remove game folder failed:", e);
+    toast("Couldn't remove that folder");
+  }
+}
+
+async function resetIgnoredFolders(path) {
+  try {
+    gameFolders = await invoke("reset_ignored_folders", { path });
+    renderSettings();
+    await checkGameFolders({ manual: true });
+  } catch (e) {
+    console.error("Reset ignored failed:", e);
+  }
+}
+
+async function setFolderCheckPeriodic(enabled) {
+  try {
+    gameFolders = await invoke("set_game_folders_periodic", { enabled });
+    renderSettings();
+  } catch (e) {
+    console.error("Couldn't save setting:", e);
+  }
 }
 
 // ── Per-game three-dot menu ──────────────────────────────────────────────────
@@ -1504,7 +1772,20 @@ function setupEventListeners() {
     // Add game
     if (e.target.id === "add") { openDialog(); return; }
     if (e.target.id === "dok") { addGameFromDialog(); return; }
-    if (e.target.id === "dlg-browse") { $("#dlg-file").click(); return; }
+    if (e.target.id === "dlg-browse") { browseExecutable(); return; }
+
+    // Game folders
+    if (e.target.id === "gf-add") { addGameFolder(); return; }
+    if (e.target.id === "gf-check") { checkGameFolders({ manual: true }); return; }
+    const gfRemove = e.target.closest("[data-gf-remove]");
+    if (gfRemove) { removeGameFolder(gfRemove.dataset.gfRemove); return; }
+    const gfReset = e.target.closest("[data-gf-reset]");
+    if (gfReset) { e.preventDefault(); resetIgnoredFolders(gfReset.dataset.gfReset); return; }
+    if (e.target.id === "found-review") { openFoundDialog(foundGames); return; }
+    if (e.target.id === "found-later") { foundNotNow(); return; }
+    if (e.target.id === "fnd-add") { addFoundGames(); return; }
+    if (e.target.id === "fnd-ignore") { ignoreFoundGame(); return; }
+    if (e.target.id === "fnd-later") { foundNotNow(); return; }
     if (e.target.id === "dlg-find") { suggestArtwork(); return; }
 
     // Artwork suggestion pick
@@ -1552,6 +1833,10 @@ function setupEventListeners() {
     const tg = e.target.closest(".tg");
     if (tg) {
       if (tg.dataset.store) return;
+      if (tg.hasAttribute("data-gf-periodic")) {
+        setFolderCheckPeriodic(tg.getAttribute("aria-pressed") !== "true");
+        return;
+      }
       const key = tg.dataset.setting;
       if (!key) return;
       settings[key] = !(tg.getAttribute("aria-pressed") === "true");
@@ -1656,12 +1941,21 @@ async function init() {
   await loadCachedGames();
   await loadStoreConfig();
   await loadDetectedStores();
+  await loadGameFolders();
   renderAll();
   // Show the saved library first; refresh it in the background if enabled.
   // With nothing saved yet there is nothing to show, so always scan then.
   if (isTauri && (settings.scan_on_startup || allGames.length === 0)) {
     await scanGames({ quiet: true });
   }
+  // After the scan, so games a store just installed aren't offered as new.
+  await checkGameFolders();
+  setInterval(() => {
+    if (gameFolders.check_periodically) checkGameFolders();
+  }, FOLDER_CHECK_MS);
+  // Show a popup that was held back while the window was hidden or in the background.
+  window.addEventListener("focus", presentFoundGames);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) presentFoundGames(); });
 }
 
 init();

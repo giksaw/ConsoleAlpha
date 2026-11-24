@@ -1,6 +1,6 @@
 pub mod amazon;
 pub mod battlenet;
-mod common;
+pub(crate) mod common;
 pub mod ea;
 pub mod epic;
 pub mod gog;

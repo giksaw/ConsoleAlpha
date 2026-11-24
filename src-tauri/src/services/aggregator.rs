@@ -58,7 +58,7 @@ impl LibraryAggregator {
 
 /// Normalise an install folder for duplicate detection: case-insensitive,
 /// one kind of slash, no trailing separator.
-fn path_key(path: &str) -> String {
+pub(crate) fn path_key(path: &str) -> String {
     path.trim()
         .replace('/', "\\")
         .trim_end_matches('\\')
