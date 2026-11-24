@@ -26,10 +26,10 @@
 <body>
 <main>
   <h1>Game Console Alpha Privacy Policy</h1>
-  <p class="date">Last updated: 23 November 2026</p>
+  <p class="date">Last updated: 24 November 2026</p>
 
   <p>Game Console Alpha is a desktop app for Windows, made by Giksaw Interactive (Gladson Mathew), that gathers the games installed on your PC
-  into one library. This policy explains what information the app uses, where it goes, and what stays on your PC.</p>
+  into one library, and can list games you own in Steam or Epic Games that aren't installed yet. This policy explains what information the app uses, where it goes, and what stays on your PC.</p>
 
   <p><strong>Short version:</strong> Game Console Alpha has no accounts, no ads, no analytics and no tracking. The developer
   does not run any servers and never receives your data. Your library and settings stay on your PC. To show cover art,
@@ -38,7 +38,11 @@
   <h2>Information that stays on your PC</h2>
   <p>To find your games, Game Console Alpha reads files and Windows registry entries left by game launchers you have installed
   (such as Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA app, Xbox, Amazon Games, itch.io and Rockstar
-  Games). It only reads them; it does not change them.</p>
+  Games). For Steam and Epic Games it also reads the launcher's own local record of the games you own, so it can list
+  ones that aren't installed. It only reads these files; it does not change them, and it never signs in to your accounts.</p>
+  <p>When you click <strong>Install</strong>, Game Console Alpha asks Steam or Epic Games to install the game. The
+  launcher shows its own install window and does the download; Game Console Alpha follows its progress by reading the
+  launcher's local files.</p>
   <p>The app saves the following on your PC, inside your Windows user profile:</p>
   <ul>
     <li>the list of games it found, their install folders and sizes;</li>
@@ -69,6 +73,9 @@
     <tr><td>Google Search, in your web browser</td>
         <td>The game's name</td>
         <td>Only when you click "Search the web" for cover art</td></tr>
+    <tr><td>Store websites, in your web browser<br><small>Steam, Epic Games Store, GOG, itch.io, Microsoft Store</small></td>
+        <td>The game's Steam app ID, or its name as a store search</td>
+        <td>Only when you click "Open store page"</td></tr>
   </table>
   <p>These services handle that information under their own privacy policies. Games, launchers and websites that you
   open from Game Console Alpha are separate programs with their own privacy practices.</p>

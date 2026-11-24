@@ -13,7 +13,7 @@ The installer isn't code-signed yet, so Windows SmartScreen may show *"Windows p
 
 Install either the GitHub version or the Store version, not both. They share the same settings and library data, and both appear in Start as "Game Console Alpha".
 
-Game Console Alpha doesn't sell, download or install games, and it doesn't collect any data. See the [privacy policy](https://giksaw.github.io/ConsoleAlpha/privacy-policy.html).
+Game Console Alpha doesn't sell or download games: when you click **Install** on a game you own, it asks Steam or Epic Games to install it, and the download runs in that launcher. It doesn't collect any data. See the [privacy policy](https://giksaw.github.io/ConsoleAlpha/privacy-policy.html).
 
 ## Features
 
