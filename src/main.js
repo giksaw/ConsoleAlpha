@@ -54,7 +54,7 @@ const lookupFailed = new Set();  // ids whose lookup errored this session
 // On-disk sizes, keyed by game id. Computed lazily for games the user can see.
 const sizes = new Map();         // id → bytes | null | "pending"
 
-// Games owned in Steam but not installed, and their installs. Owned games are
+// Games owned in a store (Steam, Epic) but not installed, and their installs. Owned games are
 // kept apart from allGames: `is_installed: false` there means "removed".
 let ownedGames = [];                 // from get_store_library, each tagged owned: true
 const installStatus = new Map();     // app_id → latest status from the backend
@@ -764,31 +764,46 @@ async function scanGames({ quiet = false } = {}) {
 }
 
 // ── Owned games: install from the store, follow progress ────────────────────
+// Stores that can list owned games and install them (backend store ids).
+const OWNED_STORES = ["steam", "epic"];
+
+function storeLabel(store) {
+  const s = STORE_CATALOG.find((x) => x.id === store);
+  return s ? s.name : store;
+}
+
 async function loadOwnedGames() {
-  if (!isTauri || storeConfig.stores.steam === false) { ownedGames = []; return; }
-  try {
-    const list = await invoke("get_store_library", { store: "steam" });
-    ownedGames = (Array.isArray(list) ? list : []).map((g) => ({ ...g, owned: true }));
-  } catch (e) {
-    console.error("Couldn't read the Steam library:", e);
-  }
+  if (!isTauri) { ownedGames = []; return; }
+  const lists = await Promise.all(OWNED_STORES.map(async (store) => {
+    if (storeConfig.stores[store] === false) return [];
+    try {
+      const list = await invoke("get_store_library", { store });
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.error(`Couldn't read the ${storeLabel(store)} library:`, e);
+      return ownedGames.filter((g) => g.store === store); // keep what we had
+    }
+  }));
+  ownedGames = lists.flat().map((g) => ({ ...g, owned: true }));
 }
 
 async function installOwnedGame(game) {
   if (!isTauri) { toast("Installing needs the desktop app"); return; }
+  const label = storeLabel(game.store);
   try {
-    await invoke("install_store_game", { store: "steam", appId: game.app_id });
-    // An old failure in Steam's log isn't news; only a new one is.
+    await invoke("install_store_game", { store: game.store, appId: game.app_id });
+    // An old failure in the store's log isn't news; only a new one is.
     const cur = installStatus.get(game.app_id);
     installWatch.set(game.app_id, {
       since: Date.now(),
+      store: game.store,
       baseline: cur && cur.state === "failed" ? cur.message : null,
     });
-    toast("Confirm the install in Steam");
+    toast(`Confirm the install in ${label}`);
     refreshInstallViews(game.app_id);
     scheduleInstallPoll(1500);
   } catch (e) {
-    toast(typeof e === "string" ? e : "Couldn't open Steam");
+    toast(typeof e === "string" ? e : `Couldn't open ${label}`);
   }
 }
 
@@ -804,12 +819,13 @@ function installInfo(g) {
   const st = installStatus.get(g.app_id);
   const w = installWatch.get(g.app_id);
   const state = st ? st.state : "none";
+  const label = storeLabel(g.store);
   if (state === "failed" && w && st.message !== w.baseline) {
     return { text: "Install failed", title: st.message, busy: false };
   }
   if (!ACTIVE_INSTALL.has(state)) {
     if (!w) return null;
-    const text = state === "installed" ? "Finishing up…" : "Waiting for Steam…";
+    const text = state === "installed" ? "Finishing up…" : `Waiting for ${label}…`;
     return { text, busy: true, indeterminate: true };
   }
   const p = Math.max(shownProgress.get(g.app_id) || 0, st.progress || 0);
@@ -821,8 +837,8 @@ function installInfo(g) {
         pct, busy: true, indeterminate: pct == null,
       };
     case "paused":
-      return { text: `Paused${pct != null ? ` at ${pct}%` : ""} in Steam`, pct, busy: false };
-    case "queued": return { text: "Queued in Steam", pct, busy: true };
+      return { text: `Paused${pct != null ? ` at ${pct}%` : ""} in ${label}`, pct, busy: false };
+    case "queued": return { text: `Queued in ${label}`, pct, busy: true };
     case "verifying": return { text: "Verifying files…", busy: true, indeterminate: true };
     case "installing": return { text: "Installing…", busy: true, indeterminate: true };
     default: return { text: "Preparing…", busy: true, indeterminate: true };
@@ -855,16 +871,19 @@ function refreshInstallViews(appId) {
   document.querySelectorAll(`[data-own="${sel}"]`).forEach((el) => el.classList.toggle("busy", busy));
 }
 
-// Poll install status every 2 s while an install is being followed. While the
-// Steam page is open, also look every 30 s for installs started in Steam itself.
+// Poll install status while an install is being followed. While a store's
+// page is open, also look every 30 s for installs started in the store itself.
 let installTimer = 0;
 let lastFullInstallCheck = 0;
+let lastFullInstallPage = "";
 
-function steamPageOpen() {
-  return currentPage === "lib" && currentFilter === "Steam" && settings.show_owned_games && ownedGames.length > 0;
+// The owned games of the store page being viewed, if any.
+function ownedPageGames() {
+  if (currentPage !== "lib" || !settings.show_owned_games) return [];
+  return ownedGamesFor(currentFilter);
 }
 
-// Installs that are moving (or that Steam hasn't picked up yet after our
+// Installs that are moving (or that the store hasn't picked up yet after our
 // click) are polled every 2 s; paused or queued ones only every 30 s, so an
 // old paused download can't keep the app busy for ever.
 const MOVING_INSTALL = new Set(["preparing", "downloading", "verifying", "installing"]);
@@ -880,21 +899,29 @@ function installMoving() {
 function scheduleInstallPoll(delay) {
   clearTimeout(installTimer);
   installTimer = 0;
-  if (!isTauri || (!installWatch.size && !steamPageOpen())) return;
+  if (!isTauri || (!installWatch.size && !ownedPageGames().length)) return;
   installTimer = setTimeout(pollInstalls, delay ?? (installMoving() ? 2000 : 30000));
 }
 
 async function pollInstalls() {
   installTimer = 0;
-  const ids = new Set(installWatch.keys());
-  if (steamPageOpen() && Date.now() - lastFullInstallCheck > 30000) {
+  const byStore = new Map(); // store → Set of app ids
+  const add = (store, id) => {
+    if (!store) return;
+    if (!byStore.has(store)) byStore.set(store, new Set());
+    byStore.get(store).add(id);
+  };
+  for (const [id, w] of installWatch) add(w.store, id);
+  const page = ownedPageGames();
+  if (page.length && (Date.now() - lastFullInstallCheck > 30000 || lastFullInstallPage !== currentFilter)) {
     lastFullInstallCheck = Date.now();
-    ownedGamesFor("Steam").forEach((g) => ids.add(g.app_id));
+    lastFullInstallPage = currentFilter;
+    page.forEach((g) => add(g.store, g.app_id));
   }
-  if (ids.size) {
+  for (const [store, ids] of byStore) {
     try {
-      const statuses = await invoke("store_install_status", { store: "steam", appIds: [...ids] });
-      await applyInstallStatuses(statuses || []);
+      const statuses = await invoke("store_install_status", { store, appIds: [...ids] });
+      await applyInstallStatuses(store, statuses || []);
     } catch (e) {
       console.error("Install status failed:", e);
     }
@@ -902,22 +929,22 @@ async function pollInstalls() {
   scheduleInstallPoll();
 }
 
-async function applyInstallStatuses(statuses) {
+async function applyInstallStatuses(store, statuses) {
   const finished = [];
   for (const st of statuses) {
     const id = st.app_id;
     installStatus.set(id, st);
     if (ACTIVE_INSTALL.has(st.state)) {
-      // Follow downloads started in Steam itself, but only once they move.
+      // Follow downloads started in the store itself, but only once they move.
       if (!installWatch.has(id) && MOVING_INSTALL.has(st.state)) {
-        installWatch.set(id, { since: Date.now(), baseline: null });
+        installWatch.set(id, { since: Date.now(), store, baseline: null });
       }
       if (st.progress != null) shownProgress.set(id, Math.max(shownProgress.get(id) || 0, st.progress));
     }
     const w = installWatch.get(id);
     if (w) {
       if (st.state === "installed") finished.push(id);
-      // Nothing started within five minutes: the Steam dialog was probably
+      // Nothing started within five minutes: the store's dialog was probably
       // cancelled. A new failure stays on screen until then too.
       else if (!ACTIVE_INSTALL.has(st.state) && Date.now() - w.since > 300000) {
         installWatch.delete(id);
@@ -936,7 +963,7 @@ async function applyInstallStatuses(statuses) {
   }
   // Pick up the new install as a normal, playable game.
   try {
-    const games = await invoke("rescan_platform", { platform: "steam" });
+    const games = await invoke("rescan_platform", { platform: store });
     if (Array.isArray(games)) allGames = games;
   } catch (e) {
     console.error("Rescan after install failed:", e);
@@ -1037,7 +1064,8 @@ function renderTop() {
     return;
   }
   const titles = { all: "All games", recent: "Recently played", fav: "Favorites", local: "Local Games", uninstalled: "Uninstalled", hidden: "Hidden" };
-  const t = titles[currentFilter] || currentFilter;
+  const store = STORE_CATALOG.find((x) => x.source === currentFilter);
+  const t = titles[currentFilter] || (store ? store.name : currentFilter);
   const games = getFilteredGames();
   topEl.innerHTML = `<h1>${t}</h1><span class="n">${games.length}</span>
     <input class="q" id="q" placeholder="Search games" value="${esc(searchQuery)}" aria-label="Search games">
@@ -1105,8 +1133,8 @@ function renderLibrary() {
   if (isTauri) {
     games.forEach(requestCoverLookup);
     if (currentView === "list") observeSizeCells();
-    // Follow installs on the Steam page, including ones started in Steam.
-    if (steamPageOpen() && !installTimer) scheduleInstallPoll(0);
+    // Follow installs on a store's page, including ones started in the store.
+    if (ownedPageGames().length && !installTimer) scheduleInstallPoll(0);
   }
 
   const qi = $("#q");
@@ -1203,7 +1231,7 @@ function renderSettings() {
     ${tg("scan_on_startup", "Scan on startup", "Uses the saved library first, then refreshes in the background.", settings.scan_on_startup)}
     ${tg("show_stores_in_sidebar", "Show stores in the sidebar", "Lists stores with games under a Stores heading. Turn off for a shorter sidebar.", settings.show_stores_in_sidebar !== false)}
     ${tg("keep_in_tray", "Keep running in the tray", "Closing the window doesn't quit Game Console Alpha.", settings.keep_in_tray)}
-    ${tg("show_owned_games", "Show games I own but haven't installed", "On a store's page, lists the rest of your library with an Install button. Steam only for now.", settings.show_owned_games !== false)}
+    ${tg("show_owned_games", "Show games I own but haven't installed", "On a store's page, lists the rest of your library with an Install button. Steam and Epic Games.", settings.show_owned_games !== false)}
     ${tg("hide_removed", "Hide games I've removed", "Trims uninstalled titles from store and collection views. They always stay visible under Uninstalled.", settings.hide_removed)}
     <h2>Artwork</h2>
     <div class="src"><div><b>SteamGridDB API key</b></div><span></span>
@@ -1320,7 +1348,12 @@ function openOwnedPanel(game) {
 }
 
 function openStorePage(game) {
-  openExternal(`https://store.steampowered.com/app/${encodeURIComponent(game.app_id)}/`);
+  if (game.store === "epic") {
+    // Epic's catalog cache has no store-page slug; search by title instead.
+    openExternal(`https://store.epicgames.com/en-US/browse?q=${encodeURIComponent(game.name)}&sortBy=relevancy`);
+  } else {
+    openExternal(`https://store.steampowered.com/app/${encodeURIComponent(game.app_id)}/`);
+  }
 }
 
 function closePanel() {

@@ -60,6 +60,10 @@ fn parse_manifest(path: &Path) -> Option<GameEntry> {
     if manifest.get("bIsApplication").and_then(|v| v.as_bool()) == Some(false) {
         return None;
     }
+    // An install still downloading is shown as an owned game with progress.
+    if manifest.get("bIsIncompleteInstall").and_then(|v| v.as_bool()) == Some(true) {
+        return None;
+    }
     if str_field("MainGameAppName").is_some_and(|main| main != app_name) {
         return None;
     }

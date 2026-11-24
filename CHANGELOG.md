@@ -431,6 +431,33 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 10 — Epic Games: Owned Games & Install from the App (Nov 24, 2026)
+
+### Backend Changes
+| File | Change |
+|---|---|
+| `src-tauri/src/services/epic_library.rs` | **New.** Ownership comes from the launcher's ownership cache `%LOCALAPPDATA%\EpicGamesLauncher\Saved\Data\OC_<account>.dat` (v3: account id, count, then namespace / catalog item id / app name + flag + SHA-1 per entitlement; newest file wins; any other version returns nothing). Names and portrait box art (`DieselGameBoxTall`) come from `catcache.bin`, keeping only base games (in "games", not add-ons, no main game). Installed = a finished `Manifests\*.item`. Install opens `com.epicgames.launcher://apps/<ns>%3A<catalog id>%3A<app>?action=install` (each part checked to be `[A-Za-z0-9._-]`). Progress: bytes in the install folder ÷ the `Manifests\Pending\*.item` `InstallSize`; speed averaged over 10 s; "verifying" once ≥ 98% is on disk and the `.egstore` staging folder is empty |
+| `src-tauri/src/services/store_library.rs` | **New.** Shared `LibraryGame` (now with `store`) and `InstallStatus`, and the per-store dispatch used by the three commands |
+| `src-tauri/src/scanners/epic.rs` | Skips manifests marked `bIsIncompleteInstall` |
+
+### Frontend Changes
+- The Epic Games page lists owned games that aren't installed, the same way as Steam. Loading, installing and polling now work per store (`OWNED_STORES`); texts name the store ("Waiting for Epic Games…").
+- *Open store page* for Epic searches the Epic Store by title (the catalog cache has no product slug).
+- Store pages are titled with the store's display name ("Epic Games", not "Epic").
+
+### Research
+- **`catcache.bin` is not the library.** It held 112 "games" here, but Epic logs "found 64 entitled apps" and its ownership cache lists 65 entries: 6 games, plus Unreal Engine versions and plugins. Only games in the ownership cache are shown.
+- The ownership cache can lag: Epic logged "cache reported NotOwned" for a newly claimed game and refreshed it on install. A game claimed on the website appears after the launcher next refreshes.
+- `Data\DownloadManager\DownloadState_*.json` is just the queue (no progress), and the log has no progress lines. Bytes on disk do track the download well, because Epic writes into `.egstore\bps` as it goes rather than preallocating.
+
+### Verification
+- 6 new unit tests (ownership cache parsing and bad versions, base-game filter, install-link validation, base64, verifying phase, rate window); 31 total pass.
+- Real files: 4 owned-not-installed Epic games (Fallout 3 GOTY, Fortnite, Hogwarts Legacy, The Callisto Protocol), read in 36 ms.
+- Real install: Melvor Idle (732 MB) from the app's Install button (debug build, isolated WebView2 profile, over CDP): *Waiting for Epic Games… → Downloading 19% · 10.4 MB/s → … 90% → 99% →* toast "Melvor Idle is installed", rescan, playable card. That run showed 30 s at "99%" while Epic verified, and a jumpy 2-second speed; both were fixed afterwards (unit-tested, not re-run live).
+- **Not verified:** pausing/cancelling in Epic (a cancelled install leaves a Pending manifest, which would show as stalled "Downloading"), and updates to installed games.
+
+---
+
 ## Known Issues
 - **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
 - **SteamGridDB response parsing is untested with a real key** — the field names (`data[].id/name/url`) follow the API docs.
@@ -475,6 +502,8 @@ game-launcher/
 │   │   │   ├── aggregator.rs    # Combines scanners; enabled stores; path de-dup
 │   │   │   ├── cache.rs         # Disk cache + favorites persistence (app data dir)
 │   │   │   ├── steam_library.rs # Owned Steam games + live install progress
+│   │   │   ├── epic_library.rs  # Owned Epic games + install progress
+│   │   │   ├── store_library.rs # Shared types + per-store dispatch
 │   │   │   └── launcher.rs      # Game launching + shell_open (links without cmd)
 │   │   └── commands/mod.rs      # Tauri commands
 │   ├── icons/                   # App icon set + per-store PNGs (generated)

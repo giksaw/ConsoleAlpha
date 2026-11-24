@@ -3,3 +3,5 @@ pub mod launcher;
 pub mod cache;
 pub mod game_folders;
 pub mod steam_library;
+pub mod epic_library;
+pub mod store_library;

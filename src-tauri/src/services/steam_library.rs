@@ -16,40 +16,11 @@
 //! used for live progress.
 
 use crate::scanners::steam::{extract_vdf_value, get_library_folders, get_steam_path};
-use serde::Serialize;
+use crate::services::store_library::{InstallStatus, LibraryGame};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-
-/// A game in the user's Steam library that isn't installed on this PC.
-#[derive(Debug, Clone, Serialize)]
-pub struct LibraryGame {
-    /// Same id an installed copy gets (`steam_<appid>`), so favorites, hidden
-    /// state and covers carry over once it's installed.
-    pub id: String,
-    pub app_id: String,
-    pub name: String,
-    pub source: String,
-    pub cover_image_path: Option<String>,
-}
-
-/// How far a Steam install has got.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct InstallStatus {
-    pub app_id: String,
-    /// "queued" | "preparing" | "downloading" | "verifying" | "installing" |
-    /// "paused" | "installed" | "failed" | "none"
-    pub state: String,
-    /// 0..1 estimate of the download, when known.
-    pub progress: Option<f64>,
-    pub bytes_total: Option<u64>,
-    pub bytes_done: Option<u64>,
-    /// Current download speed in bytes per second, when Steam has reported one.
-    pub rate: Option<f64>,
-    /// Why the last attempt stopped, for "failed".
-    pub message: Option<String>,
-}
 
 // ── Owned games ──────────────────────────────────────────────────────────────
 
@@ -85,6 +56,7 @@ pub fn owned_uninstalled_games() -> Vec<LibraryGame> {
         .map(|(app_id, info)| LibraryGame {
             id: format!("steam_{}", app_id),
             app_id: app_id.to_string(),
+            store: "steam".to_string(),
             name: info.name.trim().to_string(),
             source: "Steam".to_string(),
             cover_image_path: Some(format!(
@@ -418,20 +390,6 @@ pub fn install_status(app_ids: &[String]) -> Vec<InstallStatus> {
             status_for(id, parsed.apps.get(&app), &parsed, &patches, installed.contains(&app), now)
         })
         .collect()
-}
-
-impl InstallStatus {
-    fn none(app_id: &str) -> Self {
-        InstallStatus {
-            app_id: app_id.to_string(),
-            state: "none".into(),
-            progress: None,
-            bytes_total: None,
-            bytes_done: None,
-            rate: None,
-            message: None,
-        }
-    }
 }
 
 /// A chunk-state file: depot, the manifest being downloaded, finished chunks,

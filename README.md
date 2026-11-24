@@ -18,7 +18,7 @@ Game Console Alpha doesn't sell, download or install games, and it doesn't colle
 ## Features
 
 - **Multi-store library** — Scans Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar Games
-- **Your whole Steam library** — The Steam page also lists games you own but haven't installed (read from Steam's local files: no login or API key). Click **Install** and Steam's install dialog opens; the download's progress and speed then show on the game's card
+- **Your whole Steam and Epic library** — The Steam and Epic Games pages also list games you own but haven't installed (read from each launcher's local files: no login or API key). Click **Install** and the store's own install dialog opens; the download's progress and speed then show on the game's card
 - **Custom games** — Manually add executables for games not in a store library
 - **Game folders** — Pick the folders you keep games in (e.g. `C:\Games`); new game folders there are offered for your library on launch (and every 30 minutes, optionally), and only added once you confirm
 - **Grid & list views** — Switch between a visual grid and a detailed table view
