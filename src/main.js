@@ -2512,6 +2512,8 @@ function setupEventListeners() {
   // Right-click a game (card or list row) for its menu, at the pointer. The
   // keyboard's context-menu key reports no position, so hang it off the card.
   document.addEventListener("contextmenu", (e) => {
+    // Trending cards have no menu; don't show the webview's own one either.
+    if (e.target.closest("[data-trend]")) { e.preventDefault(); return; }
     const card = e.target.closest("[data-id]");
     if (!card || !scrollEl.contains(card)) return;
     const game = findGame(card.dataset.id);
