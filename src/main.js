@@ -14,7 +14,7 @@ let sortBy = "recent";
 let favorites = new Set();
 let hiddenGames = new Set();      // game ids the user has hidden
 let selectedGame = null;
-let currentPage = "lib"; // "lib" | "set"
+let currentPage = "lib"; // "lib" | "trend" | "set"
 let controllerIndex = 0;
 let gameStatuses = {}; // game_id → "backlog" | "playing" | "finished"
 let lastLaunched = {}; // game_id → ISO time of the last launch from Game Console Alpha
@@ -1035,6 +1035,8 @@ function renderRail() {
   for (const [k, l] of NAV) {
     html += `<button class="ri ${currentPage === "lib" && currentFilter === k ? "on" : ""}" data-f="${k}">${l}<em>${cnt(k)}</em></button>`;
   }
+  html += `<h4>Discover</h4>`;
+  html += `<button class="ri ${currentPage === "trend" ? "on" : ""}" data-pg="trend">Trending</button>`;
   if (settings.show_stores_in_sidebar !== false) {
     const rows = STORE_CATALOG
       .filter((s) => storeConfig.stores[s.id] !== false)
@@ -1062,6 +1064,13 @@ function renderRail() {
 function renderTop() {
   if (currentPage === "set") {
     topEl.innerHTML = `<h1>Sources &amp; settings</h1>`;
+    return;
+  }
+  if (currentPage === "trend") {
+    const entry = trendData.get(trendKey());
+    const n = entry && entry.games.length ? `<span class="n">${entry.games.length}</span>` : "";
+    topEl.innerHTML = `<h1>Trending</h1>${n}
+      <input class="q" id="tq" type="search" placeholder="Search Steam" value="${esc(trendInput)}" aria-label="Search the Steam store">`;
     return;
   }
   const titles = { all: "All games", recent: "Recently played", fav: "Favorites", local: "Local Games", uninstalled: "Uninstalled", hidden: "Hidden" };
@@ -1291,7 +1300,217 @@ function renderSettings() {
 function renderAll() {
   renderRail();
   if (currentPage === "lib") renderLibrary();
+  else if (currentPage === "trend") renderTrending();
   else renderSettings();
+}
+
+// ── Trending ─────────────────────────────────────────────────────────────────
+// Lists and search from the Steam store. The backend fetches them (and caches
+// them for 30 minutes); they're kept here too so a re-render never refetches.
+const TREND_LISTS = [
+  ["top_sellers", "Top sellers"],
+  ["new_trending", "New & trending"],
+  ["most_played", "Most played"],
+  ["upcoming", "Upcoming"],
+];
+const TREND_STALE_MS = 30 * 60 * 1000;
+let trendList = "top_sellers";
+let trendInput = "";          // the search box as typed
+let trendQuery = "";          // the search being shown (trimmed)
+const trendData = new Map();  // "list:<kind>" | "q:<query>" → { games, at, loading, error }
+let trendSearchTimer = 0;
+let trendSelected = null;     // game in the details panel
+
+function trendKey() {
+  return trendQuery.length >= 2 ? `q:${trendQuery.toLowerCase()}` : `list:${trendList}`;
+}
+
+// Fetch a list or search. A slow answer for an older search is stored but only
+// shown if it's still what the page is showing.
+async function loadTrend(key) {
+  const prev = trendData.get(key);
+  if (prev && prev.loading) return;
+  if (key.startsWith("q:")) {
+    for (const [k, v] of trendData) if (k.startsWith("q:") && k !== key && !v.loading) trendData.delete(k);
+  }
+  trendData.set(key, { games: prev ? prev.games : [], at: prev ? prev.at : 0, loading: true });
+  let next;
+  try {
+    const games = key.startsWith("q:")
+      ? await invoke("search_store_games", { query: key.slice(2) })
+      : await invoke("get_trending_games", { list: key.slice(5) });
+    next = { games: Array.isArray(games) ? games : [], at: Date.now() };
+  } catch (e) {
+    next = {
+      games: prev ? prev.games : [],
+      at: prev ? prev.at : 0,
+      error: typeof e === "string" ? e : "Couldn't reach the Steam store",
+    };
+  }
+  trendData.set(key, next);
+  if (currentPage === "trend" && trendKey() === key) renderTrending();
+}
+
+function findTrend(appId) {
+  const entry = trendData.get(trendKey());
+  return entry ? entry.games.find((t) => t.app_id === appId) : null;
+}
+
+// The user's copy of a trending game: installed, or owned but not installed.
+function trendLibraryGame(t) {
+  return findGame(`steam_${t.app_id}`) || null;
+}
+
+function trendRelease(t) {
+  if (!t.release_date) return t.release_message || (t.coming_soon ? "Coming soon" : "");
+  const d = new Date(t.release_date * 1000);
+  if (t.coming_soon) {
+    switch (t.release_display) {
+      case "date_full": break;
+      case "date_month": return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+      case "date_quarter": return `Q${Math.floor(d.getMonth() / 3) + 1} ${d.getFullYear()}`;
+      case "date_year": return String(d.getFullYear());
+      default: return t.release_message || "Coming soon";
+    }
+  }
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Price as HTML ("" when Steam gave none).
+function trendPrice(t) {
+  if (t.is_free) return "Free to play";
+  if (!t.price) return "";
+  return t.discount_pct > 0 && t.original_price
+    ? `<s>${esc(t.original_price)}</s> ${esc(t.price)}`
+    : esc(t.price);
+}
+
+function renderTrendCover(t, overlay = "") {
+  const [first, ...rest] = t.covers || [];
+  if (first) {
+    const fb = rest.length ? ` data-fb="${esc(rest.join("|"))}"` : "";
+    return `<div class="cv" style="background:#222">
+      <img src="${esc(first)}"${fb} alt="${esc(t.name)}" loading="lazy">${overlay}
+    </div>`;
+  }
+  const { background, color } = getCoverGradient(t.name);
+  return `<div class="cv" style="background:${background};color:${color}">
+    <span class="nm">${esc(t.name)}</span>${overlay}
+  </div>`;
+}
+
+function renderTrendCard(t) {
+  const lib = trendLibraryGame(t);
+  let overlay = "";
+  if (lib) overlay += `<span class="tag">${lib.owned ? "Owned" : "Installed"}</span>`;
+  if (t.discount_pct > 0 && !t.coming_soon) overlay += `<span class="tag off">-${t.discount_pct}%</span>`;
+  if (lib && !lib.owned) overlay += `<span class="play" data-play="${esc(lib.id)}">Play</span>`;
+  const sub = t.coming_soon ? esc(trendRelease(t)) : (trendPrice(t) || esc(trendRelease(t)));
+  return `<button class="g" data-trend="${esc(t.app_id)}">
+      ${renderTrendCover(t, overlay)}
+      <div class="grow"><b title="${esc(t.name)}">${esc(t.name)}</b></div>
+      <span class="pr">${sub}</span>
+    </button>`;
+}
+
+function renderTrending() {
+  const active = document.activeElement;
+  const focused = active && active.id === "tq";
+  const caret = focused ? active.selectionStart : 0;
+
+  const key = trendKey();
+  let entry = trendData.get(key);
+  if (isTauri && (!entry || (!entry.loading && !entry.error && Date.now() - entry.at > TREND_STALE_MS))) {
+    loadTrend(key);
+    entry = trendData.get(key);
+  }
+  renderTop();
+
+  const searching = key.startsWith("q:");
+  const tabs = TREND_LISTS.map(([k, label]) => {
+    const on = !searching && trendList === k;
+    return `<button role="tab" aria-selected="${on}" class="${on ? "on" : ""}" data-tl="${k}">${esc(label)}</button>`;
+  }).join("");
+  const head = `<div class="tabs"><div class="seg" role="tablist" aria-label="Trending lists">${tabs}</div>
+    <span class="src">${searching ? `Steam results for &ldquo;${esc(trendQuery)}&rdquo;` : "From the Steam store"}</span></div>`;
+
+  let body;
+  if (!isTauri) {
+    body = `<div class="empty">Trending needs the desktop app.</div>`;
+  } else if (!entry || (entry.loading && !entry.games.length)) {
+    body = `<div class="grid" aria-busy="true">` +
+      `<div class="g"><div class="cv sk"></div><div class="sk-t"></div></div>`.repeat(12) + `</div>`;
+  } else if (entry.error && !entry.games.length) {
+    body = `<div class="empty">${esc(entry.error)}<br>
+      <button class="btn o" id="tretry" style="margin-top:14px">Try again</button></div>`;
+  } else if (!entry.games.length) {
+    body = `<div class="empty">${searching
+      ? `No games on Steam match &ldquo;${esc(trendQuery)}&rdquo;.`
+      : "Nothing in this list right now."}</div>`;
+  } else {
+    body = `<div class="grid">${entry.games.map(renderTrendCard).join("")}</div>`;
+  }
+  scrollEl.innerHTML = head + body;
+
+  const tq = $("#tq");
+  if (tq) {
+    if (focused) { tq.focus(); tq.setSelectionRange(caret, caret); }
+    tq.oninput = () => {
+      trendInput = tq.value;
+      clearTimeout(trendSearchTimer);
+      trendSearchTimer = setTimeout(applyTrendSearch, 400);
+    };
+    tq.onkeydown = (e) => {
+      if (e.key === "Enter") { clearTimeout(trendSearchTimer); applyTrendSearch(); }
+    };
+  }
+}
+
+function applyTrendSearch() {
+  const q = trendInput.trim();
+  if (q === trendQuery) return;
+  trendQuery = q;
+  scrollEl.scrollTop = 0;
+  if (currentPage === "trend") renderTrending();
+}
+
+function openTrendPanel(t) {
+  selectedGame = null;
+  trendSelected = t;
+  const lib = trendLibraryGame(t);
+  let main = "";
+  let actsAttrs = ` class="acts"`;
+  if (lib && !lib.owned) {
+    main = `<button class="btn" data-play="${esc(lib.id)}">Play</button>`;
+  } else if (lib) {
+    main = `<button class="btn" data-install="${esc(lib.id)}">Install</button>`;
+    actsAttrs = ` class="acts own ${installBusy(lib) ? "busy" : ""}" data-own="${esc(lib.id)}"`;
+  }
+
+  const names = (list) => (list || []).map(esc).join(", ");
+  const rows = [];
+  if (lib) rows.push(["Library", lib.owned ? "In your Steam library, not installed" : "Installed"]);
+  if (lib && lib.owned) rows.push(["Install", `<span data-inst="${esc(lib.id)}">${installLine(lib)}</span>`]);
+  if (t.developers.length) rows.push(["Developer", names(t.developers)]);
+  if (t.publishers.length && names(t.publishers) !== names(t.developers)) rows.push(["Publisher", names(t.publishers)]);
+  const rel = trendRelease(t);
+  if (rel) rows.push([t.coming_soon ? "Release" : "Released", esc(rel) + (t.early_access ? " · Early Access" : "")]);
+  if (t.review_label) {
+    rows.push(["Reviews", `${esc(t.review_label)} · ${t.review_percent}% of ${Number(t.review_count).toLocaleString()}`]);
+  }
+  const price = trendPrice(t);
+  if (price && !t.coming_soon) {
+    rows.push(["Price", price + (t.discount_pct > 0 ? ` <em class="dc">-${t.discount_pct}%</em>` : "")]);
+  }
+
+  panelEl.innerHTML = `<button class="x" id="px" aria-label="Close">&times;</button>
+    ${renderTrendCover(t)}
+    <h2>${esc(t.name)}</h2>
+    ${t.description ? `<p>${esc(t.description)}</p>` : ""}
+    <div${actsAttrs}>${main}<button class="btn o" id="tstore">View on Steam</button></div>
+    <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  panelEl.classList.add("on");
+  scrimEl.classList.add("on");
 }
 
 // ── Details panel ────────────────────────────────────────────────────────────
@@ -1378,6 +1597,7 @@ function closePanel() {
   dlgEl.classList.remove("on");
   covDlgEl.classList.remove("on");
   selectedGame = null;
+  trendSelected = null;
 }
 
 // ── Add game dialog ──────────────────────────────────────────────────────────
@@ -2088,11 +2308,33 @@ function setupEventListeners() {
       return;
     }
 
+    // Trending: list tabs, cards, retry, store page
+    const tl = e.target.closest("[data-tl]");
+    if (tl) {
+      trendList = tl.dataset.tl;
+      trendInput = trendQuery = "";
+      clearTimeout(trendSearchTimer);
+      scrollEl.scrollTop = 0;
+      renderTrending();
+      return;
+    }
+    const tc = e.target.closest("[data-trend]");
+    if (tc) {
+      const t = findTrend(tc.dataset.trend);
+      if (t) openTrendPanel(t);
+      return;
+    }
+    if (e.target.id === "tretry") { loadTrend(trendKey()); renderTrending(); return; }
+    if (e.target.id === "tstore" && trendSelected) {
+      openExternal(`https://store.steampowered.com/app/${encodeURIComponent(trendSelected.app_id)}/`);
+      return;
+    }
+
     // Sidebar nav
     const ri = e.target.closest(".ri");
     if (ri) {
       if (ri.dataset.pad !== undefined) { openPad(); return; }
-      if (ri.dataset.pg) { currentPage = "set"; }
+      if (ri.dataset.pg) { currentPage = ri.dataset.pg; }
       else { currentPage = "lib"; currentFilter = ri.dataset.f; searchQuery = ""; }
       renderAll();
       return;

@@ -26,14 +26,15 @@
 <body>
 <main>
   <h1>Game Console Alpha Privacy Policy</h1>
-  <p class="date">Last updated: 24 November 2026</p>
+  <p class="date">Last updated: 25 November 2026</p>
 
   <p>Game Console Alpha is a desktop app for Windows, made by Giksaw Interactive (Gladson Mathew), that gathers the games installed on your PC
   into one library, and can list games you own in Steam or Epic Games that aren't installed yet. This policy explains what information the app uses, where it goes, and what stays on your PC.</p>
 
   <p><strong>Short version:</strong> Game Console Alpha has no accounts, no ads, no analytics and no tracking. The developer
   does not run any servers and never receives your data. Your library and settings stay on your PC. To show cover art,
-  the app asks a few public services for images, and those requests include game names.</p>
+  the app asks a few public services for images, and those requests include game names. The Trending page gets
+  its lists and search results from the Steam store.</p>
 
   <h2>Information that stays on your PC</h2>
   <p>To find your games, Game Console Alpha reads files and Windows registry entries left by game launchers you have installed
@@ -54,10 +55,14 @@
   <code>com.giksaw.gameconsolealpha</code> folders in <code>%APPDATA%</code> and <code>%LOCALAPPDATA%</code> to remove it.</p>
 
   <h2>Information sent to other services</h2>
-  <p>Game Console Alpha connects to the internet only to find and show cover art. Like any web request, each one reveals your
-  IP address to the service you connect to.</p>
+  <p>Game Console Alpha connects to the internet only to find and show cover art, and to show the Trending page. Like any
+  web request, each one reveals your IP address to the service you connect to.</p>
   <table>
     <tr><th>Service</th><th>What is sent</th><th>When</th></tr>
+    <tr><td>Steam store and Steam Web API<br><small>store.steampowered.com, api.steampowered.com</small></td>
+        <td>Words you type in the Trending page's search box, and the country set in Windows' region settings (so prices
+        are shown in your currency)</td>
+        <td>Only when you open the Trending page or search on it</td></tr>
     <tr><td>Steam store search<br><small>store.steampowered.com</small></td>
         <td>Names of installed games that aren't from Steam</td>
         <td>Automatically, to find cover art for those games, and when you search for artwork</td></tr>

@@ -3,6 +3,8 @@ pub mod game_folders;
 use crate::models::{CoverSuggestion, DetectedStore, GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
+use crate::services::http::{encode_query, http_client};
+use crate::services::trending::{self, TrendingGame};
 use crate::services::launcher::{shell_open, GameLauncher};
 use crate::services::store_library::{self, InstallStatus, LibraryGame};
 use tauri::State;
@@ -192,19 +194,17 @@ pub fn open_game_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Percent-encode a string for use inside a URL query parameter.
-fn encode_query(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for byte in input.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            b' ' => out.push_str("%20"),
-            other => out.push_str(&format!("%{:02X}", other)),
-        }
-    }
-    out
+/// A list for the Trending page: "top_sellers", "new_trending", "most_played"
+/// or "upcoming". Prices are in the user's region (Windows region setting).
+#[tauri::command]
+pub async fn get_trending_games(list: String) -> Result<Vec<TrendingGame>, String> {
+    trending::list(&http_client()?, &list).await
+}
+
+/// Search the Steam store for games by name, for the Trending page.
+#[tauri::command]
+pub async fn search_store_games(query: String) -> Result<Vec<TrendingGame>, String> {
+    trending::search(&http_client()?, &query).await
 }
 
 /// Look up cover art for a game by name using the public Steam store search.
@@ -287,14 +287,6 @@ pub async fn search_steam_covers(name: String) -> Result<Vec<CoverSuggestion>, S
     found.sort_by_key(|(index, _)| *index);
 
     Ok(found.into_iter().map(|(_, suggestion)| suggestion).collect())
-}
-
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .user_agent(concat!("GameConsoleAlpha/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }
 
 /// GET a SteamGridDB API route with the user's key and return its `data` array.

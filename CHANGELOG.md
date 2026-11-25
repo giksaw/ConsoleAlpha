@@ -471,6 +471,40 @@ Open DevTools (F12) → Console to see:
 
 ---
 
+## Phase 11 — Trending Page (Nov 25, 2026)
+
+### Backend Changes
+- New `services/trending.rs` with two commands: `get_trending_games(list)` and `search_store_games(query)`. All data comes from Steam and needs no API key.
+- Where each list comes from:
+  - **Top sellers** and **Upcoming**: Steam's store search JSON (`filter=topsellers` / `popularcomingsoon`, `category1=998` for games only).
+  - **Most played**: the official `ISteamChartsService/GetMostPlayedGames` chart.
+  - **New & trending**: the first 200 of Steam's `popularnew` list, keeping only games released in the last 90 days. Steam's own list is mostly evergreen hits like CS2 and Dota 2.
+- The search JSON has no app id field, so ids are read from the capsule URL (`/steam/apps/<id>/`); bundles and packages are skipped.
+- One `IStoreBrowseService/GetItems` call turns the ids into names, covers, description, developer/publisher, release info, price and reviews. Anything that isn't `type` 0 (game) is dropped, which removes Wallpaper Engine from Most played.
+- Cover URLs are built from each item's `asset_url_format`, because many file names are hashed. The fallback order is portrait `library_capsule`, then `main_capsule`, then `header`.
+- Prices use the Windows "Country or region" setting (`HKCU\Control Panel\International\Geo\Name`) and fall back to US.
+- Lists are cached in memory for 30 min and searches for 5 min, keyed by region.
+- `http_client` and `encode_query` moved to `services/http.rs` so the commands and the trending service share them.
+
+### Frontend Changes
+- New **Discover → Trending** item in the sidebar.
+- The page has tabs for Top sellers, New & trending, Most played and Upcoming, plus a **Search Steam** box. The search waits 400 ms after typing (Enter runs it at once), needs at least 2 characters, and keeps the cursor in the box while results load.
+- Cards reuse the library grid. Corner tags show **Installed** or **Owned** (matched on `steam_<appid>`) and the discount. Below each card is the price (with the old price struck through when discounted), "Free to play", or the release date for upcoming games.
+- Clicking a card opens a details panel with the description, developer, publisher, release date, reviews and price. It offers **Play** (installed), **Install** (owned; uses the existing install flow and progress) and **View on Steam**.
+- Loading shows placeholder cards. Errors show **Try again**, and a search with no matches says so.
+- Trending cards don't use `data-id`, so the library's right-click menu, game menu and cover lookups never touch them.
+- The privacy policy now lists the Steam requests the Trending page makes (search terms and region).
+
+### Verification
+- 3 new unit tests (app ids from capsule URLs, parsing a store item, dropping non-games and empty reviews). The live test `cargo test --lib live_steam -- --ignored --nocapture` passes.
+- Real debug app over CDP:
+  - Results: Top sellers 48, New & trending 42, Most played 47, Upcoming 48. Prices were in ₹ (region IN) and no images were broken.
+  - Library tags: "Owned" appeared on Apex, CS2 and PUBG. The Apex panel offers Install with the Steam install line.
+  - Search: "hollow knight" kept focus and Hollow Knight came first. A query with no matches showed the empty message.
+  - Clicking a tab clears the search, and the library still works afterwards.
+
+---
+
 ## Known Issues
 - **The seven new scanners are untested against real installs** — Battle.net, Ubisoft, EA, Xbox, Amazon, itch.io and Rockstar were written from each launcher's documented on-disk format and unit-tested with sample data only.
 - **SteamGridDB response parsing is untested with a real key** — the field names (`data[].id/name/url`) follow the API docs.
@@ -517,6 +551,8 @@ game-launcher/
 │   │   │   ├── steam_library.rs # Owned Steam games + live install progress
 │   │   │   ├── epic_library.rs  # Owned Epic games + install progress
 │   │   │   ├── store_library.rs # Shared types + per-store dispatch
+│   │   │   ├── trending.rs      # Trending lists + Steam search (Trending page)
+│   │   │   ├── http.rs          # Shared HTTP client + URL encoding
 │   │   │   └── launcher.rs      # Game launching + shell_open (links without cmd)
 │   │   └── commands/mod.rs      # Tauri commands
 │   ├── icons/                   # App icon set + per-store PNGs (generated)
