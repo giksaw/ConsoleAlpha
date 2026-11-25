@@ -4,6 +4,9 @@
 pub fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(12))
+        // Give up on a dead route in a few seconds instead of letting a
+        // blackholed IP eat the whole request timeout.
+        .connect_timeout(std::time::Duration::from_secs(5))
         .user_agent(concat!("GameConsoleAlpha/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
