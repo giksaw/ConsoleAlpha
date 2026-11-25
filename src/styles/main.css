@@ -385,6 +385,35 @@ button {
   color: #b5dc78;
 }
 
+/* Torrent availability row in the Discover details panel */
+.tk {
+  color: var(--mute);
+  font-size: 12.5px;
+  margin-right: 6px;
+}
+
+.tk.ok {
+  color: #b5dc78;
+}
+
+.tk.err {
+  color: #d9a05b;
+}
+
+.tlnk {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 2px 8px;
+  margin: 2px 4px 0 0;
+}
+
+.tlnk:hover {
+  border-color: var(--text);
+}
+
 .cv.sk {
   background: #1d2023;
   box-shadow: none;

@@ -5,6 +5,7 @@ use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
 use crate::services::http::{encode_query, http_client};
 use crate::services::trending::{self, TrendingGame};
+use crate::services::torrent::{self, TorrentCheck};
 use crate::services::launcher::{shell_open, GameLauncher};
 use crate::services::store_library::{self, InstallStatus, LibraryGame};
 use tauri::State;
@@ -205,6 +206,14 @@ pub async fn get_trending_games(list: String) -> Result<Vec<TrendingGame>, Strin
 #[tauri::command]
 pub async fn search_store_games(query: String) -> Result<Vec<TrendingGame>, String> {
     trending::search(&http_client()?, &query).await
+}
+
+/// Whether the community download catalogs list a torrent for this game, for
+/// the Discover page's details panel. Success with `available: false` is a
+/// real answer; an error means no catalog could be read at all.
+#[tauri::command]
+pub async fn check_torrent_availability(name: String) -> Result<TorrentCheck, String> {
+    torrent::check(&http_client()?, &name).await
 }
 
 /// Look up cover art for a game by name using the public Steam store search.

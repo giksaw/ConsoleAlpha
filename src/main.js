@@ -1321,6 +1321,10 @@ const trendData = new Map();  // "list:<kind>" | "q:<query>" → { games, at, lo
 let trendSearchTimer = 0;
 let trendSelected = null;     // game in the details panel
 
+// Torrent availability for games opened in the Discover details panel:
+// app_id → { checking } | { result } | { error }. Checked once per session.
+const torrentCache = new Map();
+
 function trendKey() {
   return trendQuery.length >= 2 ? `q:${trendQuery.toLowerCase()}` : `list:${trendList}`;
 }
@@ -1502,6 +1506,8 @@ function openTrendPanel(t) {
   if (price && !t.coming_soon) {
     rows.push(["Price", price + (t.discount_pct > 0 ? ` <em class="dc">-${t.discount_pct}%</em>` : "")]);
   }
+  // Filled in by loadTorrentInfo once the catalogs answer.
+  rows.push(["Torrents", `<span data-torrent="${esc(t.app_id)}"></span>`]);
 
   panelEl.innerHTML = `<button class="x" id="px" aria-label="Close">&times;</button>
     ${renderTrendCover(t)}
@@ -1511,6 +1517,72 @@ function openTrendPanel(t) {
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
   panelEl.classList.add("on");
   scrimEl.classList.add("on");
+  loadTorrentInfo(t);
+}
+
+// Look up whether the community download catalogs have a torrent for a
+// Discover game — once per session per game, in the background.
+function loadTorrentInfo(t) {
+  if (!isTauri) return;
+  const key = t.app_id;
+  const entry = torrentCache.get(key);
+  if (entry && (entry.checking || entry.result || entry.error)) {
+    renderTorrentRow(t);
+    return;
+  }
+  torrentCache.set(key, { checking: true });
+  renderTorrentRow(t);
+  invoke("check_torrent_availability", { name: t.name })
+    .then((result) => torrentCache.set(key, { result }))
+    .catch((e) => torrentCache.set(key, { error: typeof e === "string" ? e : "Check failed" }))
+    .then(() => {
+      // Only touch the panel if it's still showing this game.
+      if (trendSelected && trendSelected.app_id === key) renderTorrentRow(t);
+    });
+}
+
+// The Torrents row's contents: the sources that have the game, or — when no
+// catalog knows it, or none could be read — plain site searches, so the row
+// is a way out either way.
+function renderTorrentRow(t) {
+  const box = document.querySelector(`[data-torrent="${CSS.escape(t.app_id)}"]`);
+  if (!box) return;
+  const entry = torrentCache.get(t.app_id);
+  if (!entry || entry.checking) {
+    box.innerHTML = `<span class="tk">Checking…</span>`;
+    return;
+  }
+  if (entry.error) {
+    box.innerHTML = `<span class="tk err">Couldn't check</span>${torrentSearchLinks(t.name)}`;
+    return;
+  }
+  const res = entry.result;
+  if (res && res.available && res.sources.length) {
+    box.innerHTML = `<span class="tk ok">✓ Available</span>` +
+      res.sources.map((s) => `<button class="tlnk" data-turl="${esc(s.url)}">${esc(s.name)}</button>`).join("") +
+      // Online-Fix has crack fixes rather than torrents, so it never answers
+      // the availability check — but it's still a place to look.
+      `<button class="tlnk" data-turl="${esc(onlineFixUrl(t.name))}">Online-Fix</button>`;
+    return;
+  }
+  box.innerHTML = `<span class="tk no">Not in catalogs</span>${torrentSearchLinks(t.name)}`;
+}
+
+// Online-Fix's search page (DataLife Engine, so it's the index.php form).
+function onlineFixUrl(name) {
+  return `https://online-fix.me/index.php?do=search&subaction=search&story=${encodeURIComponent(name)}`;
+}
+
+// Site-search buttons for the game's title. They live here because the panel
+// needs them even when the backend is offline — that's the whole fallback.
+function torrentSearchLinks(name) {
+  const q = encodeURIComponent(name);
+  return [
+    ["FitGirl", `https://fitgirl-repacks.site/?s=${q}`],
+    ["DODI", `https://dodi-repacks.site/?s=${q}`],
+    ["1337x", `https://1337x.to/search/${q}/1/`],
+    ["Online-Fix", onlineFixUrl(name)],
+  ].map(([label, url]) => `<button class="tlnk" data-turl="${esc(url)}">${esc(label)}</button>`).join("");
 }
 
 // ── Details panel ────────────────────────────────────────────────────────────
@@ -2327,6 +2399,12 @@ function setupEventListeners() {
     if (e.target.id === "tretry") { loadTrend(trendKey()); renderTrending(); return; }
     if (e.target.id === "tstore" && trendSelected) {
       openExternal(`https://store.steampowered.com/app/${encodeURIComponent(trendSelected.app_id)}/`);
+      return;
+    }
+    // Torrent source / site-search buttons in the panel's Torrents row
+    const tlnk = e.target.closest("[data-turl]");
+    if (tlnk) {
+      openExternal(tlnk.dataset.turl);
       return;
     }
 

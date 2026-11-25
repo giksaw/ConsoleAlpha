@@ -7,3 +7,4 @@ pub mod epic_library;
 pub mod store_library;
 pub mod http;
 pub mod trending;
+pub mod torrent;

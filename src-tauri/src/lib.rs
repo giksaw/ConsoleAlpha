@@ -42,6 +42,7 @@ pub fn run() {
             commands::search_steamgriddb_covers,
             commands::get_trending_games,
             commands::search_store_games,
+            commands::check_torrent_availability,
             commands::get_game_size,
             commands::detect_stores,
             commands::game_folders::get_game_folders,
