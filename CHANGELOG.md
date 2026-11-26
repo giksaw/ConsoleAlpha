@@ -503,6 +503,11 @@ Open DevTools (F12) → Console to see:
   - Search: "hollow knight" kept focus and Hollow Knight came first. A query with no matches showed the empty message.
   - Clicking a tab clears the search, and the library still works afterwards.
 
+## Phase 11.0.1 — Torrent Availability (Nov 25, 2026; released in 0.5.0)
+- New `services/torrent.rs` and `check_torrent_availability(name)` command. It reads Hydra-format community catalogs (FitGirl, DODI and others) from raw.githubusercontent.com, with jsDelivr as a fallback, and caches them for 6 hours. Titles are matched on the user's PC.
+- The Trending details panel has a **Torrents** row. It lists the sources whose catalog has the game and links to each site's search. When no catalog has the game, or none could be read, it shows plain site searches instead. Nothing is downloaded by the app.
+- The privacy policy lists the catalog hosts and the site links (added with the 0.5.0 release).
+
 ## Phase 11.1 — Trending: Paging, Multiplayer Tab, Filters (Nov 26, 2026)
 
 ### Backend
