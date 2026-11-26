@@ -503,6 +503,39 @@ Open DevTools (F12) → Console to see:
   - Search: "hollow knight" kept focus and Hollow Knight came first. A query with no matches showed the empty message.
   - Clicking a tab clears the search, and the library still works afterwards.
 
+## Phase 11.1 — Trending: Paging, Multiplayer Tab, Filters (Nov 26, 2026)
+
+### Backend
+- `get_trending_games` and `search_store_games` are replaced by `browse_store(tab, query, filters, start)`, which returns one page `{ games, total, next_start }`, and `store_filter_options()` (Steam's ~430 user tags from `tagdata/populartags`, cached for a day, plus the 30 store languages).
+- Store pages now use the search page's `infinite=1` format: 50 rows per page, app ids from `data-ds-appid` (bundles and packages skipped), and the total match count. Paging follows the raw search offset, so rows GetItems drops never shift a page.
+- Search was capped at 48 results with no way to see more. It now pages through everything Steam has ("portal": 3,385).
+- New **Multiplayer** tab: top sellers with store category 1 (Multi-player). Choosing a sort browses every multiplayer game in that order instead.
+- Filters sent to the store search: tags (all of), excluded tags, player modes and features (store categories, all of), OS, Steam Deck Verified/Playable, VR, language, free / paid, on sale, hide Early Access, and sort (Search and Multiplayer only; the store ignores `sort_by` under its ranked `filter=` lists).
+- Filters checked on the GetItems data because the store search can't do them: max price (from `final_price_in_cents`; the store's `maxprice` only takes some per-currency values), lowest review %, fewest reviews, released within N days, year range. When these thin a page out, up to 6 store pages are read until 24 games remain.
+- Most played (the weekly chart, ~100 games) has no search parameters, so every filter is applied to its GetItems data and the result is paged 50 at a time.
+- GetItems now also returns tags, store categories, platforms (Windows/macOS/Linux, Deck rating, VR) and supported languages for each game.
+- A 429 from Steam shows "The Steam store is busy" instead of a raw status.
+
+### Frontend
+- Infinite scroll: the next page loads when the grid's end is within 900 px, and new cards are appended without redrawing the grid. A "Load more" button is the fallback, and auto-loading stops after three pages in a row add nothing.
+- A **Filters** button opens the filter panel. The panel has rows for Genres & tags, Players, Features, Price, Reviews, Release, Platform, Language and Library, plus "Clear all filters".
+  - Tag chips cycle through include, exclude and off. Any of Steam's tags can be added from a searchable list.
+  - "Hide games I own or have installed" is applied in the page.
+- Filters are shared by all tabs and saved in localStorage. Text boxes wait 700 ms after typing before searching; other controls wait 250 ms.
+- The count next to the title is Steam's total when it's known. Otherwise it's the number of games loaded, with "+" when more are available.
+- The details panel adds Players, Platforms and Tags rows. Clicking a tag filters by it.
+
+### Verified
+- `cargo test --lib trending` covers the filter→parameter mapping, the result-row parser and the local and chart filters. The ignored `live_steam` test passed against the real store, including page 2 of every tab, search paging without duplicates, co-op + Linux, cheap + well reviewed, chart filters, and the language numbering checked against Elden Ring.
+- Real debug app over CDP:
+  - Top sellers went from 50 to 99 on scroll.
+  - Multiplayer showed 2,759 games; adding Online co-op + Linux brought it to 202.
+  - The Horror chip went include → exclude.
+  - Most played with max ₹1000 and 80%+ reviews showed 35 of 94.
+  - Search "portal" went from 50 to 100 on scroll, and the "Best reviewed" sort worked.
+  - The Release filter is disabled on Upcoming.
+  - Clicking a tag in the panel added it as a filter.
+
 ---
 
 ## Known Issues
@@ -551,7 +584,7 @@ game-launcher/
 │   │   │   ├── steam_library.rs # Owned Steam games + live install progress
 │   │   │   ├── epic_library.rs  # Owned Epic games + install progress
 │   │   │   ├── store_library.rs # Shared types + per-store dispatch
-│   │   │   ├── trending.rs      # Trending lists + Steam search (Trending page)
+│   │   │   ├── trending.rs      # Trending tabs, Steam search + filters (Trending page)
 │   │   │   ├── http.rs          # Shared HTTP client + URL encoding
 │   │   │   └── launcher.rs      # Game launching + shell_open (links without cmd)
 │   │   └── commands/mod.rs      # Tauri commands

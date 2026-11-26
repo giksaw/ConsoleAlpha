@@ -4,7 +4,7 @@ use crate::models::{CoverSuggestion, DetectedStore, GameEntry, StoreConfig};
 use crate::services::aggregator::LibraryAggregator;
 use crate::services::cache::CacheService;
 use crate::services::http::{encode_query, http_client};
-use crate::services::trending::{self, TrendingGame};
+use crate::services::trending::{self, FilterOptions, StoreFilters, StorePage};
 use crate::services::torrent::{self, TorrentCheck};
 use crate::services::launcher::{shell_open, GameLauncher};
 use crate::services::store_library::{self, InstallStatus, LibraryGame};
@@ -195,17 +195,31 @@ pub fn open_game_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// A list for the Trending page: "top_sellers", "new_trending", "most_played"
-/// or "upcoming". Prices are in the user's region (Windows region setting).
+/// A page of one of the Trending page's tabs ("top_sellers", "new_trending",
+/// "multiplayer", "most_played", "upcoming" or "search" with `query`), with
+/// the filter panel's filters, starting at `start` (0, then the previous
+/// page's `next_start`). Prices are in the user's region (Windows region setting).
 #[tauri::command]
-pub async fn get_trending_games(list: String) -> Result<Vec<TrendingGame>, String> {
-    trending::list(&http_client()?, &list).await
+pub async fn browse_store(
+    tab: String,
+    query: Option<String>,
+    filters: Option<StoreFilters>,
+    start: Option<usize>,
+) -> Result<StorePage, String> {
+    trending::browse(
+        &http_client()?,
+        &tab,
+        query.as_deref().unwrap_or(""),
+        &filters.unwrap_or_default(),
+        start.unwrap_or(0),
+    )
+    .await
 }
 
-/// Search the Steam store for games by name, for the Trending page.
+/// Steam's user tags and the store languages, for the Trending filter panel.
 #[tauri::command]
-pub async fn search_store_games(query: String) -> Result<Vec<TrendingGame>, String> {
-    trending::search(&http_client()?, &query).await
+pub async fn store_filter_options() -> Result<FilterOptions, String> {
+    trending::filter_options(&http_client()?).await
 }
 
 /// Whether the community download catalogs list a torrent for this game, for

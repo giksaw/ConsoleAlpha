@@ -347,10 +347,146 @@ button {
   margin-bottom: 22px;
 }
 
-.tabs .src {
+.tabs .src,
+.tabs .tinfo {
   margin-left: auto;
   color: var(--mute);
   font-size: 12.5px;
+}
+
+.btn.sm {
+  padding: 4px 12px;
+  font-weight: 500;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tfb.on {
+  border-color: var(--text);
+}
+
+.tfb em {
+  font-style: normal;
+  background: var(--hi);
+  color: var(--on);
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 0 6px;
+  margin-left: 4px;
+}
+
+/* Trending filter panel */
+.tfil {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 16px;
+  margin: -8px 0 24px;
+}
+
+.tfil[hidden] {
+  display: none;
+}
+
+.fr {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+}
+
+.fr + .fr {
+  border-top: 1px solid var(--line);
+}
+
+.fl {
+  color: var(--mute);
+  font-size: 12.5px;
+  padding-top: 5px;
+}
+
+.fc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.4;
+  padding: 3px 11px;
+}
+
+.chip:hover {
+  border-color: var(--mute);
+}
+
+.chip.on {
+  background: var(--hi);
+  border-color: var(--hi);
+  color: var(--on);
+}
+
+.chip.no {
+  border-color: #8a4a3c;
+  color: #e0a294;
+  text-decoration: line-through;
+}
+
+.fin {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  width: 96px;
+}
+
+.fin.wide {
+  width: 180px;
+}
+
+.fin:focus,
+.tfil .sel:focus {
+  outline: 0;
+  border-color: var(--hi);
+}
+
+.fin::placeholder {
+  color: var(--mute);
+}
+
+.tfil .sel {
+  font-size: 13px;
+}
+
+.tfil .sel:disabled {
+  opacity: 0.45;
+}
+
+.tmore {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 0 10px;
+}
+
+@media (max-width: 720px) {
+  .fr {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
 }
 
 .cv .tag {

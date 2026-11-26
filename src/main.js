@@ -1067,9 +1067,7 @@ function renderTop() {
     return;
   }
   if (currentPage === "trend") {
-    const entry = trendData.get(trendKey());
-    const n = entry && entry.games.length ? `<span class="n">${entry.games.length}</span>` : "";
-    topEl.innerHTML = `<h1>Trending</h1>${n}
+    topEl.innerHTML = `<h1>Trending</h1><span class="n" id="tcount">${esc(trendTotalText(trendData.get(trendKey())))}</span>
       <input class="q" id="tq" type="search" placeholder="Search Steam" value="${esc(trendInput)}" aria-label="Search the Steam store">`;
     return;
   }
@@ -1305,54 +1303,204 @@ function renderAll() {
 }
 
 // ── Trending ─────────────────────────────────────────────────────────────────
-// Lists and search from the Steam store. The backend fetches them (and caches
-// them for 30 minutes); they're kept here too so a re-render never refetches.
+// Tabs and search from the Steam store, a page at a time, with the filter
+// panel's filters. The backend fetches pages (and caches them for 30 minutes);
+// they're kept here too so a re-render never refetches. More pages load as the
+// grid scrolls to its end.
 const TREND_LISTS = [
   ["top_sellers", "Top sellers"],
   ["new_trending", "New & trending"],
+  ["multiplayer", "Multiplayer"],
   ["most_played", "Most played"],
   ["upcoming", "Upcoming"],
 ];
 const TREND_STALE_MS = 30 * 60 * 1000;
+// Sorts the store can do; only Search and Multiplayer use them (the ranked
+// tabs are their own order).
+const TREND_SORT_REST = [["reviews", "Best reviewed"], ["released", "Newest"], ["name", "Name"],
+  ["price_asc", "Lowest price"], ["price_desc", "Highest price"]];
+const TREND_SORTS = {
+  search: [["relevance", "Relevance"], ...TREND_SORT_REST],
+  multiplayer: [["top", "Top sellers"], ...TREND_SORT_REST],
+};
+// Steam store categories (ids from the store's own category list).
+const TREND_PLAYERS = [
+  [2, "Single-player"], [1, "Multi-player"], [9, "Co-op"], [38, "Online co-op"],
+  [49, "PvP"], [36, "Online PvP"], [24, "Split screen"], [39, "Split-screen co-op"],
+  [37, "Split-screen PvP"], [48, "LAN co-op"], [47, "LAN PvP"], [20, "MMO"],
+  [27, "Cross-platform"], [44, "Remote Play Together"],
+];
+const TREND_FEATURES = [
+  [28, "Full controller support"], [18, "Partial controller support"], [22, "Achievements"],
+  [23, "Steam Cloud"], [29, "Trading cards"], [30, "Workshop"], [62, "Family Sharing"],
+  [8, "Valve Anti-Cheat"], [17, "Level editor"],
+];
+// Genre tags shown as one-click chips (matched by name to Steam's tag list).
+const TREND_QUICK_TAGS = [
+  "Action", "Adventure", "RPG", "Strategy", "Simulation", "Casual", "Indie", "Shooter",
+  "FPS", "Open World", "Survival", "Horror", "Puzzle", "Platformer", "Racing", "Sports",
+  "Fighting", "Roguelike", "Roguelite", "Souls-like", "Metroidvania", "Sandbox", "Story Rich",
+  "Building", "City Builder", "Turn-Based Strategy", "Card Game", "Visual Novel", "Anime",
+  "Battle Royale", "Cozy", "Pixel Graphics",
+];
+const TREND_REVIEW_PCT = [["", "Any rating"], ["70", "70%+ positive"], ["80", "80%+ positive"], ["90", "90%+ positive"], ["95", "95%+ positive"]];
+const TREND_REVIEW_COUNT = [["", "Any number of reviews"], ["100", "100+ reviews"], ["1000", "1,000+ reviews"], ["10000", "10,000+ reviews"], ["100000", "100,000+ reviews"]];
+const TREND_WITHIN = [["", "Released any time"], ["7", "Past week"], ["30", "Past month"], ["90", "Past 3 months"], ["180", "Past 6 months"], ["365", "Past year"]];
+const TREND_FILTERS_KEY = "cabinet_trend_filters";
+
+function emptyTrendFilters() {
+  return {
+    tags: [], exclude_tags: [], categories: [], os: "", deck: [], vr: false, language: "",
+    price: "", max_price: "", on_sale: false, hide_early_access: false,
+    min_review_pct: "", min_review_count: "", released_within_days: "", year_min: "", year_max: "",
+    hide_library: false,
+  };
+}
+
+function loadTrendFilters() {
+  const f = emptyTrendFilters();
+  try {
+    const saved = JSON.parse(localStorage.getItem(TREND_FILTERS_KEY) || "null");
+    if (saved && typeof saved === "object") {
+      for (const k of Object.keys(f)) {
+        const v = saved[k];
+        if (v === undefined || typeof v !== typeof f[k] || Array.isArray(v) !== Array.isArray(f[k])) continue;
+        f[k] = Array.isArray(v) ? v.map(Number).filter(Number.isFinite) : v;
+      }
+    }
+  } catch {}
+  return f;
+}
+
 let trendList = "top_sellers";
 let trendInput = "";          // the search box as typed
 let trendQuery = "";          // the search being shown (trimmed)
-const trendData = new Map();  // "list:<kind>" | "q:<query>" → { games, at, loading, error }
+let trendFilters = loadTrendFilters();
+const trendSort = { search: "relevance", multiplayer: "top" };
+let trendFiltersOpen = false;
+let trendOptions = null;      // { tags: [{id,name}], languages: [{id,name}] } from the store
+let trendOptionsLoading = false;
+// key → { games, total, next, at, loading, more (loading a further page), error, moreError, emptyRuns }
+const trendData = new Map();
 let trendSearchTimer = 0;
+let trendRefreshTimer = 0;
 let trendSelected = null;     // game in the details panel
 
 // Torrent availability for games opened in the Discover details panel:
 // app_id → { checking } | { result } | { error }. Checked once per session.
 const torrentCache = new Map();
 
-function trendKey() {
-  return trendQuery.length >= 2 ? `q:${trendQuery.toLowerCase()}` : `list:${trendList}`;
+function saveTrendFilters() {
+  try { localStorage.setItem(TREND_FILTERS_KEY, JSON.stringify(trendFilters)); } catch {}
 }
 
-// Fetch a list or search. A slow answer for an older search is stored but only
-// shown if it's still what the page is showing.
-async function loadTrend(key) {
+function trendTab() {
+  return trendQuery.length >= 2 ? "search" : trendList;
+}
+
+// The filters as the backend takes them, for a tab.
+function trendApiFilters(tab) {
+  const f = trendFilters;
+  const num = (v) => {
+    const s = String(v).trim().replace(/[^\d.]/g, "");
+    const n = Number(s);
+    return s !== "" && Number.isFinite(n) ? n : null;
+  };
+  const int = (v) => { const n = num(v); return n === null ? null : Math.round(n); };
+  return {
+    tags: f.tags, exclude_tags: f.exclude_tags, categories: f.categories,
+    os: f.os || null, deck: f.deck, vr: f.vr, language: f.language || null,
+    price: f.price || null, max_price: num(f.max_price), on_sale: f.on_sale,
+    hide_early_access: f.hide_early_access,
+    min_review_pct: int(f.min_review_pct), min_review_count: int(f.min_review_count),
+    // Nothing upcoming has been released yet.
+    released_within_days: tab === "upcoming" ? null : int(f.released_within_days),
+    year_min: int(f.year_min), year_max: int(f.year_max),
+    sort: TREND_SORTS[tab] ? trendSort[tab] : null,
+  };
+}
+
+function trendKey() {
+  const tab = trendTab();
+  // The query is encoded so a "|" in it can't break the key apart.
+  const q = tab === "search" ? encodeURIComponent(trendQuery.toLowerCase()) : "";
+  return `${tab}|${q}|${JSON.stringify(trendApiFilters(tab))}`;
+}
+
+// How many filters are set (the sort doesn't count).
+function trendFilterCount() {
+  const f = trendFilters;
+  let n = f.tags.length + f.exclude_tags.length + f.categories.length + f.deck.length;
+  for (const k of ["os", "language", "price", "max_price", "min_review_pct", "min_review_count", "released_within_days", "year_min", "year_max"]) {
+    if (String(f[k]).trim() !== "") n++;
+  }
+  for (const k of ["vr", "on_sale", "hide_early_access", "hide_library"]) if (f[k]) n++;
+  return n;
+}
+
+// Fetch the first page of a tab or search (or, with `more`, the next one). A
+// slow answer for an older key is stored but only shown if it's still what
+// the page is showing.
+async function loadTrend(key, more = false) {
   const prev = trendData.get(key);
-  if (prev && prev.loading) return;
-  if (key.startsWith("q:")) {
-    for (const [k, v] of trendData) if (k.startsWith("q:") && k !== key && !v.loading) trendData.delete(k);
+  if (prev && (prev.loading || prev.more)) return;
+  if (more && (!prev || prev.next == null)) return;
+  const [tab, q] = key.split("|", 2);
+  const filters = JSON.parse(key.slice(tab.length + q.length + 2));
+  const query = tab === "search" ? trendQuery.trim() : "";
+
+  if (more) {
+    prev.more = true;
+    prev.moreError = null;
+  } else {
+    // Keep the map from growing without bound as filters change.
+    if (trendData.size > 40) {
+      for (const [k, v] of trendData) {
+        if (trendData.size <= 30) break;
+        if (k !== key && !v.loading && !v.more) trendData.delete(k);
+      }
+    }
+    trendData.set(key, {
+      games: prev ? prev.games : [], total: prev ? prev.total : null, next: prev ? prev.next : null,
+      at: prev ? prev.at : 0, loading: true,
+    });
   }
-  trendData.set(key, { games: prev ? prev.games : [], at: prev ? prev.at : 0, loading: true });
-  let next;
+
+  let page = null;
+  let error = null;
   try {
-    const games = key.startsWith("q:")
-      ? await invoke("search_store_games", { query: key.slice(2) })
-      : await invoke("get_trending_games", { list: key.slice(5) });
-    next = { games: Array.isArray(games) ? games : [], at: Date.now() };
+    page = await invoke("browse_store", { tab, query, filters, start: more ? prev.next : 0 });
   } catch (e) {
-    next = {
-      games: prev ? prev.games : [],
-      at: prev ? prev.at : 0,
-      error: typeof e === "string" ? e : "Couldn't reach the Steam store",
-    };
+    error = typeof e === "string" ? e : "Couldn't reach the Steam store";
   }
-  trendData.set(key, next);
-  if (currentPage === "trend" && trendKey() === key) renderTrending();
+  const entry = trendData.get(key);
+  if (!entry) return;
+  const games = page && Array.isArray(page.games) ? page.games : [];
+
+  if (more) {
+    entry.more = false;
+    if (error) {
+      entry.moreError = error;
+    } else {
+      const seen = new Set(entry.games.map((t) => t.app_id));
+      const fresh = games.filter((t) => !seen.has(t.app_id));
+      entry.games = entry.games.concat(fresh);
+      entry.next = page.next_start ?? null;
+      if (page.total != null) entry.total = page.total;
+      entry.emptyRuns = fresh.length ? 0 : (entry.emptyRuns || 0) + 1;
+      if (currentPage === "trend" && trendKey() === key) appendTrendCards(fresh);
+      return;
+    }
+  } else if (error) {
+    entry.loading = false;
+    entry.error = error;
+  } else {
+    trendData.set(key, {
+      games, total: page.total ?? null, next: page.next_start ?? null, at: Date.now(),
+      emptyRuns: games.length ? 0 : 1,
+    });
+  }
+  if (currentPage === "trend" && trendKey() === key) renderTrendResults();
 }
 
 function findTrend(appId) {
@@ -1363,6 +1511,10 @@ function findTrend(appId) {
 // The user's copy of a trending game: installed, or owned but not installed.
 function trendLibraryGame(t) {
   return findGame(`steam_${t.app_id}`) || null;
+}
+
+function trendVisible(games) {
+  return trendFilters.hide_library ? games.filter((t) => !trendLibraryGame(t)) : games;
 }
 
 function trendRelease(t) {
@@ -1417,44 +1569,242 @@ function renderTrendCard(t) {
     </button>`;
 }
 
+// Steam's tag list and the store languages for the filter panel, once.
+function loadTrendOptions() {
+  if (!isTauri || trendOptions || trendOptionsLoading) return;
+  trendOptionsLoading = true;
+  invoke("store_filter_options")
+    .then((o) => { trendOptions = o && Array.isArray(o.tags) ? o : null; })
+    .catch(() => {})
+    .then(() => {
+      trendOptionsLoading = false;
+      if (currentPage === "trend" && trendFiltersOpen) renderTrendPanel();
+    });
+}
+
+function trendTagName(id) {
+  const tag = trendOptions && trendOptions.tags.find((t) => Number(t.id) === id);
+  return tag ? tag.name : `Tag ${id}`;
+}
+
+// Tag chips: off → must have → must not have → off.
+function trendTagChip(id, name) {
+  const inc = trendFilters.tags.includes(id);
+  const exc = trendFilters.exclude_tags.includes(id);
+  const title = inc ? "Only games with this tag. Click to hide games with it instead."
+    : exc ? "Games with this tag are hidden. Click to clear."
+    : "Click to show only games with this tag.";
+  return `<button class="chip ${inc ? "on" : exc ? "no" : ""}" data-ttag="${id}" title="${title}" aria-pressed="${inc}">${exc ? "&minus; " : ""}${esc(name)}</button>`;
+}
+
+function trendChip(kind, value, label, on, title = "") {
+  return `<button class="chip ${on ? "on" : ""}" data-tfc="${kind}:${esc(String(value))}" aria-pressed="${on}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
+}
+
+function trendSelect(id, options, value, label, disabled = false) {
+  return `<select class="sel" id="${id}" aria-label="${esc(label)}"${disabled ? " disabled" : ""}>${options
+    .map(([v, l]) => `<option value="${esc(v)}"${String(value) === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+}
+
+function trendPanelHtml() {
+  const f = trendFilters;
+  const tab = trendTab();
+  const tagRow = [];
+  const shown = new Set();
+  if (trendOptions) {
+    const byName = new Map(trendOptions.tags.map((t) => [t.name.toLowerCase(), Number(t.id)]));
+    for (const name of TREND_QUICK_TAGS) {
+      const id = byName.get(name.toLowerCase());
+      if (id != null && !shown.has(id)) { shown.add(id); tagRow.push(trendTagChip(id, name)); }
+    }
+  }
+  for (const id of [...f.tags, ...f.exclude_tags]) {
+    if (!shown.has(id)) { shown.add(id); tagRow.push(trendTagChip(id, trendTagName(id))); }
+  }
+  const tagList = trendOptions
+    ? `<datalist id="ttaglist">${trendOptions.tags.map((t) => `<option value="${esc(t.name)}">`).join("")}</datalist>`
+    : "";
+  const langs = [["", "Any language"], ...((trendOptions && trendOptions.languages) || []).map((l) => [l.id, l.name])];
+  if (f.language && !langs.some(([v]) => v === f.language)) langs.push([f.language, f.language]);
+
+  const row = (label, body) => `<div class="fr"><span class="fl">${label}</span><div class="fc">${body}</div></div>`;
+  const priceSeg = [["", "Any"], ["free", "Free"], ["paid", "Paid"]].map(([v, l]) =>
+    `<button class="${f.price === v ? "on" : ""}" data-tfc="price:${v}" aria-pressed="${f.price === v}">${l}</button>`).join("");
+  return `
+    ${row("Genres &amp; tags", `${tagRow.join("")}
+      <input class="fin wide" id="ttagin" list="ttaglist" placeholder="${trendOptions ? "Add any Steam tag…" : "Loading tags…"}" aria-label="Add a tag filter"${trendOptions ? "" : " disabled"}>${tagList}`)}
+    ${row("Players", TREND_PLAYERS.map(([id, l]) => trendChip("cat", id, l, f.categories.includes(id))).join(""))}
+    ${row("Features", TREND_FEATURES.map(([id, l]) => trendChip("cat", id, l, f.categories.includes(id))).join(""))}
+    ${row("Price", `<div class="seg">${priceSeg}</div>
+      <input class="fin" id="tmaxp" inputmode="decimal" placeholder="Max price" value="${esc(f.max_price)}" aria-label="Highest price, in your Steam store's currency" title="Highest price, in your Steam store's currency">
+      ${trendChip("flag", "on_sale", "On sale", f.on_sale)}`)}
+    ${row("Reviews", `${trendSelect("trpct", TREND_REVIEW_PCT, f.min_review_pct, "Lowest share of positive reviews")}
+      ${trendSelect("trcnt", TREND_REVIEW_COUNT, f.min_review_count, "Fewest reviews")}`)}
+    ${row("Release", `${trendSelect("twithin", TREND_WITHIN, tab === "upcoming" ? "" : f.released_within_days, "Released within", tab === "upcoming")}
+      <input class="fin" id="tymin" inputmode="numeric" placeholder="From year" value="${esc(f.year_min)}" aria-label="Released in or after year">
+      <input class="fin" id="tymax" inputmode="numeric" placeholder="To year" value="${esc(f.year_max)}" aria-label="Released in or before year">
+      ${trendChip("flag", "hide_early_access", "Hide Early Access", f.hide_early_access)}`)}
+    ${row("Platform", `${trendSelect("tos", [["", "Any OS"], ["win", "Windows"], ["mac", "macOS"], ["linux", "Linux / SteamOS"]], f.os, "Operating system")}
+      ${trendChip("deck", 3, "Deck Verified", f.deck.includes(3))}
+      ${trendChip("deck", 2, "Deck Playable", f.deck.includes(2))}
+      ${trendChip("flag", "vr", "VR", f.vr, "Supports VR headsets")}`)}
+    ${row("Language", trendSelect("tlang", langs, f.language, "Supported language"))}
+    ${row("Library", `${trendChip("flag", "hide_library", "Hide games I own or have installed", f.hide_library)}
+      <button class="btn o sm" data-tfclear${trendFilterCount() ? "" : " disabled"}>Clear all filters</button>`)}`;
+}
+
+// Re-draw just the filter panel, keeping focus (and the caret) where it was.
+function renderTrendPanel() {
+  const box = $("#tfil");
+  if (!box) return;
+  const a = document.activeElement;
+  let focusSel = null;
+  if (a && box.contains(a)) {
+    if (a.id) focusSel = `#${a.id}`;
+    else if (a.dataset.ttag) focusSel = `[data-ttag="${a.dataset.ttag}"]`;
+    else if (a.dataset.tfc !== undefined) focusSel = `[data-tfc="${CSS.escape(a.dataset.tfc)}"]`;
+  }
+  const caret = a && a.tagName === "INPUT" ? a.selectionStart : null;
+  box.innerHTML = trendPanelHtml();
+  bindTrendPanel();
+  updateTrendHead();
+  if (focusSel) {
+    const el = box.querySelector(focusSel);
+    if (el) {
+      el.focus();
+      if (caret != null && el.setSelectionRange) el.setSelectionRange(caret, caret);
+    }
+  }
+}
+
+function bindTrendPanel() {
+  const set = (id, key, delay = 0) => {
+    const el = $(`#${id}`);
+    if (!el) return;
+    const select = el.tagName === "SELECT";
+    const apply = () => { trendFilters[key] = el.value; trendFiltersChanged(delay, select); };
+    if (select) el.onchange = apply;
+    else el.oninput = apply;
+  };
+  set("tmaxp", "max_price", 700);
+  set("tymin", "year_min", 700);
+  set("tymax", "year_max", 700);
+  set("trpct", "min_review_pct");
+  set("trcnt", "min_review_count");
+  set("twithin", "released_within_days");
+  set("tos", "os");
+  set("tlang", "language");
+  const tagIn = $("#ttagin");
+  if (tagIn && trendOptions) {
+    const add = () => {
+      const name = tagIn.value.trim().toLowerCase();
+      const tag = trendOptions.tags.find((t) => t.name.toLowerCase() === name);
+      if (!tag) return;
+      const id = Number(tag.id);
+      trendFilters.exclude_tags = trendFilters.exclude_tags.filter((x) => x !== id);
+      if (!trendFilters.tags.includes(id)) trendFilters.tags.push(id);
+      tagIn.value = "";
+      trendFiltersChanged();
+    };
+    // Picking from the list fills in the whole name at once.
+    tagIn.oninput = add;
+    tagIn.onkeydown = (e) => { if (e.key === "Enter") add(); };
+  }
+}
+
+// A filter changed: save it, show it, and (after `delay`, so typing doesn't
+// fire a search per key) load the matching results.
+function trendFiltersChanged(delay = 0, redrawPanel = true) {
+  saveTrendFilters();
+  if (redrawPanel) renderTrendPanel();
+  else updateTrendHead();
+  clearTimeout(trendRefreshTimer);
+  trendRefreshTimer = setTimeout(() => {
+    if (currentPage === "trend") renderTrendResults();
+  }, delay || 250);
+}
+
+function clearTrendFilters() {
+  trendFilters = emptyTrendFilters();
+  trendFiltersChanged();
+}
+
+// Handles a click on a filter chip; true when it was one.
+function trendChipClick(target) {
+  const tagBtn = target.closest("[data-ttag]");
+  if (tagBtn) {
+    const id = Number(tagBtn.dataset.ttag);
+    const f = trendFilters;
+    if (f.tags.includes(id)) {
+      f.tags = f.tags.filter((x) => x !== id);
+      f.exclude_tags.push(id);
+    } else if (f.exclude_tags.includes(id)) {
+      f.exclude_tags = f.exclude_tags.filter((x) => x !== id);
+    } else {
+      f.tags.push(id);
+    }
+    trendFiltersChanged();
+    return true;
+  }
+  const chip = target.closest("[data-tfc]");
+  if (!chip) return false;
+  const [kind, value] = chip.dataset.tfc.split(":");
+  const f = trendFilters;
+  const toggle = (list, v) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  if (kind === "cat") f.categories = toggle(f.categories, Number(value));
+  else if (kind === "deck") f.deck = toggle(f.deck, Number(value));
+  else if (kind === "price") f.price = value;
+  else if (kind === "flag" && value in f) f[value] = !f[value];
+  trendFiltersChanged();
+  return true;
+}
+
+function trendTotalText(entry) {
+  if (!entry) return "";
+  if (entry.total != null && !trendFilters.hide_library) return Number(entry.total).toLocaleString();
+  const n = trendVisible(entry.games).length;
+  if (!n) return "";
+  return `${n.toLocaleString()}${entry.next != null ? "+" : ""}`;
+}
+
+function updateTrendHead() {
+  const n = trendFilterCount();
+  const btn = $("#tfbtn");
+  if (btn) {
+    btn.innerHTML = `Filters${n ? ` <em>${n}</em>` : ""}`;
+    btn.classList.toggle("on", trendFiltersOpen);
+    btn.setAttribute("aria-expanded", String(trendFiltersOpen));
+  }
+  const count = $("#tcount");
+  if (count) count.textContent = trendTotalText(trendData.get(trendKey()));
+}
+
 function renderTrending() {
   const active = document.activeElement;
   const focused = active && active.id === "tq";
   const caret = focused ? active.selectionStart : 0;
 
-  const key = trendKey();
-  let entry = trendData.get(key);
-  if (isTauri && (!entry || (!entry.loading && !entry.error && Date.now() - entry.at > TREND_STALE_MS))) {
-    loadTrend(key);
-    entry = trendData.get(key);
-  }
+  loadTrendOptions();
   renderTop();
 
-  const searching = key.startsWith("q:");
+  const tab = trendTab();
+  const searching = tab === "search";
   const tabs = TREND_LISTS.map(([k, label]) => {
     const on = !searching && trendList === k;
     return `<button role="tab" aria-selected="${on}" class="${on ? "on" : ""}" data-tl="${k}">${esc(label)}</button>`;
   }).join("");
-  const head = `<div class="tabs"><div class="seg" role="tablist" aria-label="Trending lists">${tabs}</div>
-    <span class="src">${searching ? `Steam results for &ldquo;${esc(trendQuery)}&rdquo;` : "From the Steam store"}</span></div>`;
-
-  let body;
-  if (!isTauri) {
-    body = `<div class="empty">Trending needs the desktop app.</div>`;
-  } else if (!entry || (entry.loading && !entry.games.length)) {
-    body = `<div class="grid" aria-busy="true">` +
-      `<div class="g"><div class="cv sk"></div><div class="sk-t"></div></div>`.repeat(12) + `</div>`;
-  } else if (entry.error && !entry.games.length) {
-    body = `<div class="empty">${esc(entry.error)}<br>
-      <button class="btn o" id="tretry" style="margin-top:14px">Try again</button></div>`;
-  } else if (!entry.games.length) {
-    body = `<div class="empty">${searching
-      ? `No games on Steam match &ldquo;${esc(trendQuery)}&rdquo;.`
-      : "Nothing in this list right now."}</div>`;
-  } else {
-    body = `<div class="grid">${entry.games.map(renderTrendCard).join("")}</div>`;
-  }
-  scrollEl.innerHTML = head + body;
+  const sorts = TREND_SORTS[tab];
+  const sort = sorts ? trendSelect("tsort", sorts, trendSort[tab], "Sort") : "";
+  const info = searching ? `Steam results for &ldquo;${esc(trendQuery)}&rdquo;` : "From the Steam store";
+  scrollEl.innerHTML = `<div class="tabs"><div class="seg" role="tablist" aria-label="Trending lists">${tabs}</div>
+      <button class="btn o sm tfb" id="tfbtn" aria-controls="tfil"></button>${sort}
+      <span class="tinfo">${info}</span></div>
+    <div class="tfil" id="tfil"${trendFiltersOpen ? "" : " hidden"}></div>
+    <div id="tres"></div>`;
+  if (trendFiltersOpen) { $("#tfil").innerHTML = trendPanelHtml(); bindTrendPanel(); }
+  const ts = $("#tsort");
+  if (ts) ts.onchange = () => { trendSort[tab] = ts.value; scrollEl.scrollTop = 0; renderTrending(); };
+  renderTrendResults();
 
   const tq = $("#tq");
   if (tq) {
@@ -1468,6 +1818,114 @@ function renderTrending() {
       if (e.key === "Enter") { clearTimeout(trendSearchTimer); applyTrendSearch(); }
     };
   }
+}
+
+// The results grid (and the footer under it) for what the page is showing,
+// loading it first if needed.
+function renderTrendResults() {
+  const box = $("#tres");
+  if (!box) return;
+  const key = trendKey();
+  let entry = trendData.get(key);
+  if (isTauri && (!entry || (!entry.loading && !entry.more && !entry.error && Date.now() - entry.at > TREND_STALE_MS))) {
+    loadTrend(key);
+    entry = trendData.get(key);
+  }
+  updateTrendHead();
+  const searching = key.startsWith("search|");
+  const filtered = trendFilterCount() > 0;
+
+  let body;
+  if (!isTauri) {
+    body = `<div class="empty">Trending needs the desktop app.</div>`;
+  } else if (!entry || (entry.loading && !entry.games.length)) {
+    body = `<div class="grid" aria-busy="true">` +
+      `<div class="g"><div class="cv sk"></div><div class="sk-t"></div></div>`.repeat(12) + `</div>`;
+  } else if (entry.error && !entry.games.length) {
+    body = `<div class="empty">${esc(entry.error)}<br>
+      <button class="btn o" id="tretry" style="margin-top:14px">Try again</button></div>`;
+  } else {
+    const games = trendVisible(entry.games);
+    if (!games.length && entry.next == null) {
+      const what = searching
+        ? `No games on Steam match &ldquo;${esc(trendQuery)}&rdquo;${filtered ? " with these filters" : ""}.`
+        : filtered ? "No games in this list match these filters." : "Nothing in this list right now.";
+      body = `<div class="empty">${what}${filtered
+        ? `<br><button class="btn o" data-tfclear style="margin-top:14px">Clear all filters</button>` : ""}</div>`;
+    } else {
+      body = `<div class="grid">${games.map(renderTrendCard).join("")}</div><div class="tmore" id="tmore"></div>`;
+    }
+  }
+  box.innerHTML = body;
+  renderTrendFooter();
+  queueTrendMore();
+}
+
+// Add a further page's cards to the grid without re-drawing it (so images
+// and the scroll position stay put).
+function appendTrendCards(games) {
+  const grid = $("#tres .grid:not([aria-busy])");
+  if (!grid) { renderTrendResults(); return; }
+  const shown = trendVisible(games);
+  if (shown.length) grid.insertAdjacentHTML("beforeend", shown.map(renderTrendCard).join(""));
+  updateTrendHead();
+  const entry = trendData.get(trendKey());
+  if (entry && entry.next == null && !grid.querySelector(".g")) { renderTrendResults(); return; }
+  renderTrendFooter();
+  queueTrendMore();
+}
+
+function renderTrendFooter() {
+  const foot = $("#tmore");
+  if (!foot) return;
+  const entry = trendData.get(trendKey());
+  if (!entry) { foot.innerHTML = ""; return; }
+  if (entry.more) {
+    foot.innerHTML = `<span class="tk">Loading more…</span>`;
+  } else if (entry.moreError) {
+    foot.innerHTML = `<span class="tk err">${esc(entry.moreError)}</span> <button class="btn o sm" id="tmorebtn">Try again</button>`;
+  } else if (entry.next != null) {
+    foot.innerHTML = `<button class="btn o sm" id="tmorebtn">Load more</button>`;
+  } else if (entry.games.length) {
+    foot.innerHTML = `<span class="tk">End of results</span>`;
+  } else {
+    foot.innerHTML = "";
+  }
+}
+
+// Load the next page when the grid's end is near (or the page is too short to
+// scroll). Stops auto-loading after a few pages in a row added nothing; the
+// Load more button still works then.
+let trendMoreQueued = false;
+function queueTrendMore() {
+  if (trendMoreQueued) return;
+  trendMoreQueued = true;
+  requestAnimationFrame(() => {
+    trendMoreQueued = false;
+    maybeLoadMoreTrend();
+  });
+}
+
+function maybeLoadMoreTrend() {
+  if (currentPage !== "trend" || !isTauri) return;
+  const key = trendKey();
+  const entry = trendData.get(key);
+  if (!entry || entry.loading || entry.more || entry.moreError || entry.next == null) return;
+  if ((entry.emptyRuns || 0) >= 3) return;
+  const left = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+  if (left > 900) return;
+  loadTrend(key, true);
+  renderTrendFooter();
+}
+
+function loadMoreTrend() {
+  const key = trendKey();
+  const entry = trendData.get(key);
+  if (!entry) return;
+  entry.moreError = null;
+  entry.emptyRuns = 0;
+  loadTrend(key, true);
+  renderTrendFooter();
 }
 
 function applyTrendSearch() {
@@ -1505,6 +1963,17 @@ function openTrendPanel(t) {
   const price = trendPrice(t);
   if (price && !t.coming_soon) {
     rows.push(["Price", price + (t.discount_pct > 0 ? ` <em class="dc">-${t.discount_pct}%</em>` : "")]);
+  }
+  const players = TREND_PLAYERS.filter(([id]) => (t.categories || []).includes(id)).map(([, l]) => l);
+  if (players.length) rows.push(["Players", esc(players.join(", "))]);
+  const plat = [t.windows && "Windows", t.mac && "macOS", t.linux && "Linux"].filter(Boolean);
+  if (t.deck === 3) plat.push("Steam Deck Verified");
+  else if (t.deck === 2) plat.push("Steam Deck Playable");
+  if (t.vr) plat.push("VR");
+  if (plat.length) rows.push(["Platforms", esc(plat.join(" · "))]);
+  if (t.tag_ids && t.tag_ids.length && trendOptions) {
+    rows.push(["Tags", t.tag_ids.slice(0, 10).map((id) =>
+      `<button class="tlnk" data-addtag="${id}" title="Show only games with this tag">${esc(trendTagName(id))}</button>`).join("")]);
   }
   // Filled in by loadTorrentInfo once the catalogs answer.
   rows.push(["Torrents", `<span data-torrent="${esc(t.app_id)}"></span>`]);
@@ -2396,7 +2865,32 @@ function setupEventListeners() {
       if (t) openTrendPanel(t);
       return;
     }
-    if (e.target.id === "tretry") { loadTrend(trendKey()); renderTrending(); return; }
+    if (e.target.id === "tretry") { loadTrend(trendKey()); renderTrendResults(); return; }
+    if (e.target.closest("#tmorebtn")) { loadMoreTrend(); return; }
+    if (e.target.closest("#tfbtn")) {
+      trendFiltersOpen = !trendFiltersOpen;
+      const box = $("#tfil");
+      if (box) {
+        box.hidden = !trendFiltersOpen;
+        if (trendFiltersOpen) renderTrendPanel();
+      }
+      updateTrendHead();
+      return;
+    }
+    if (e.target.closest("[data-tfclear]")) { clearTrendFilters(); return; }
+    if (trendChipClick(e.target)) return;
+    const addTag = e.target.closest("[data-addtag]");
+    if (addTag) {
+      const id = Number(addTag.dataset.addtag);
+      trendFilters.exclude_tags = trendFilters.exclude_tags.filter((x) => x !== id);
+      if (!trendFilters.tags.includes(id)) trendFilters.tags.push(id);
+      closePanel();
+      trendFiltersOpen = true;
+      saveTrendFilters();
+      scrollEl.scrollTop = 0;
+      renderTrending();
+      return;
+    }
     if (e.target.id === "tstore" && trendSelected) {
       openExternal(`https://store.steampowered.com/app/${encodeURIComponent(trendSelected.app_id)}/`);
       return;
@@ -2603,6 +3097,7 @@ function setupEventListeners() {
 
   // Dismiss the menu on scroll / resize
   scrollEl.addEventListener("scroll", () => { if (menuEl.classList.contains("on")) closeMenu(); }, true);
+  scrollEl.addEventListener("scroll", () => { if (currentPage === "trend") queueTrendMore(); }, { passive: true });
   window.addEventListener("resize", () => { if (menuEl.classList.contains("on")) closeMenu(); });
 }
 
