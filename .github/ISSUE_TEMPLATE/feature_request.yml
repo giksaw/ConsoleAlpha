@@ -1,0 +1,41 @@
+name: 💡 Request a feature
+description: Suggest something you'd like Game Console Alpha to do. You don't need any technical knowledge.
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape the app! Plain words are perfect. If someone already asked for the same thing, a 👍 on their request helps too.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the feature in your own words.
+      placeholder: "Example: a button that shows whether a game will run on my PC before I install it."
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help you?
+      description: What are you trying to do, or what's annoying today?
+      placeholder: "Example: I keep buying games my laptop can't run."
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app is it about?
+      options:
+        - My game library
+        - Installing games
+        - Trending / discovering games
+        - Controller mode
+        - Covers and looks
+        - Settings
+        - Something new
+        - Not sure
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, examples from other apps, links. All optional.

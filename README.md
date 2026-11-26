@@ -1,157 +1,160 @@
-# Game Console Alpha
+<div align="center">
 
-One library for all your PC games. Game Console Alpha finds the games you already have installed from Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar Games, lets you add any other game by hand, and launches everything from one clean interface — with a mouse, keyboard or controller.
+# 🎮 Game Console Alpha
 
-## Download
+**All your PC games in one place, from every launcher, with one click to play.**
 
-**Windows 10 (version 2004 or later) and Windows 11, 64-bit.**
+[![Latest release](https://img.shields.io/github/v/release/giksaw/ConsoleAlpha?label=download&style=for-the-badge&color=e8e5de&labelColor=151719)](https://github.com/giksaw/ConsoleAlpha/releases/latest)
+[![Windows 10 & 11](https://img.shields.io/badge/Windows-10%20%7C%2011-e8e5de?style=for-the-badge&labelColor=151719)](#-get-it-in-a-minute)
+[![Free](https://img.shields.io/badge/price-free-e8e5de?style=for-the-badge&labelColor=151719)](LICENSE)
 
-- **GitHub:** get `GameConsoleAlpha-<version>-x64-setup.exe` from the [latest release](https://github.com/giksaw/ConsoleAlpha/releases/latest) and run it. It installs for your user account only and doesn't need administrator rights.
-- **Microsoft Store:** coming soon. The Store version updates itself automatically.
+<img src="docs/screenshots/trending.webp" alt="Game Console Alpha showing popular Steam games" width="900">
 
-The installer isn't code-signed yet, so Windows SmartScreen may show *"Windows protected your PC"*. Click **More info → Run anyway**. The GitHub version doesn't update itself: download the new installer from Releases to update.
+**[⬇️ Download for Windows](https://github.com/giksaw/ConsoleAlpha/releases/latest)** · [See what's coming](#-coming-next) · [Request a feature](#-ask-for-a-feature-or-report-a-problem)
 
-Install either the GitHub version or the Store version, not both. They share the same settings and library data, and both appear in Start as "Game Console Alpha".
+</div>
 
-Game Console Alpha doesn't sell or download games: when you click **Install** on a game you own, it asks Steam or Epic Games to install it, and the download runs in that launcher. It doesn't collect any data. See the [privacy policy](https://giksaw.github.io/ConsoleAlpha/privacy-policy.html).
+> [!TIP]
+> **Developer?** The technical side, including how it works, where data is stored, the project structure and how to build it, is in **[TECHNICAL.md](TECHNICAL.md)**.
 
-## Features
+---
 
-- **Multi-store library** — Scans Steam, Epic Games, GOG Galaxy, Battle.net, Ubisoft Connect, EA App, Xbox, Amazon Games, itch.io and Rockstar Games
-- **Your whole Steam and Epic library** — The Steam and Epic Games pages also list games you own but haven't installed (read from each launcher's local files: no login or API key). Click **Install** and the store's own install dialog opens; the download's progress and speed then show on the game's card
-- **Trending** — Top sellers, new & trending releases, multiplayer, most played and upcoming games from the Steam store, plus a Steam search. Every tab keeps loading as you scroll, and can be filtered by genre and tags, player modes (co-op, PvP, split screen, LAN, MMO…), features, price, sales, reviews, release date, OS, Steam Deck, VR and language. A game's details also show whether community download catalogs list a torrent for it, with links to those sites. Prices in your currency; games you already have are marked Installed or Owned, and you can play or install them from there
-- **Custom games** — Manually add executables for games not in a store library
-- **Game folders** — Pick the folders you keep games in (e.g. `C:\Games`); new game folders there are offered for your library on launch (and every 30 minutes, optionally), and only added once you confirm
-- **Grid & list views** — Switch between a visual grid and a detailed table view
-- **Search & sort** — Filter by name, sort by recently played or A-Z
-- **Recently played** — Uses Steam's own last-played time, plus every launch made from Game Console Alpha
-- **Favorites & hiding** — Mark favorites; hide games you don't want to see (always reversible)
-- **Right-click menu** — Right-click any game to play, install, open its store page, open its install (or game) folder, set a cover, favorite or hide it
-- **Custom cover art** — Automatic Steam artwork lookup by name, or pick your own image
-- **Game status** — Organize your library with Backlog / Playing / Finished states
-- **Controller mode** — Open with a gamepad's Start button; navigate and launch with a gamepad or keyboard (A = play, B = back, Y = favorite)
-- **Settings** — Scan on startup, keep running in the tray, hide removed games, and per-store toggles
+## ✨ What it does
 
-## Tech Stack
+### 📚 Every game you own, in one library
+Game Console Alpha finds the games already installed on your PC. You don't need to sign in to anything. It works with:
 
-| Layer     | Technology                    |
-| --------- | ----------------------------- |
-| Frontend  | Vanilla JavaScript + Vite     |
-| Backend   | Rust (Tauri 2)                |
-| Styling   | Custom CSS                    |
-| Platform  | Windows (Tauri desktop app)   |
+**Steam · Epic Games · GOG Galaxy · Battle.net · Ubisoft Connect · EA App · Xbox · Amazon Games · itch.io · Rockstar Games**
 
-## Project Structure
+Got a game from somewhere else? Add it yourself in a couple of clicks, or tell the app which folder you keep games in and it will offer new ones as they appear.
 
-```
-├── index.html              # App entry point
-├── package.json            # Node dependencies & scripts
-├── vite.config.js          # Vite configuration
-├── src/
-│   ├── main.js             # Frontend application logic
-│   ├── styles/             # CSS stylesheets
-│   └── assets/             # Frontend assets
-└── src-tauri/
-    ├── Cargo.toml          # Rust dependencies
-    ├── tauri.conf.json     # Tauri configuration
-    ├── build.rs            # Build script
-    ├── src/                # Rust backend code
-    │   └── main.rs
-    └── icons/              # App icons
-```
+### ⬇️ Install games you already bought
+The Steam and Epic Games pages also show the games you own but haven't installed. Click **Install**, and that store's installer opens. You can watch the download's progress and speed right on the game's card.
 
-## Getting Started
+### 🔥 Discover what's popular
+The **Trending** page shows what's hot on Steam right now, with prices in your own currency:
 
-### Prerequisites
+- **Top sellers**, **New & trending**, **Multiplayer**, **Most played** and **Upcoming**
+- **Search** the whole Steam store. Results keep loading as you scroll.
+- **Filters** to find exactly what you're after:
+  - genre, and hide genres you don't like
+  - co-op, online, split screen, LAN
+  - price, sales, reviews, release date
+  - Steam Deck, VR, language
+- Games you already have are marked **Owned** or **Installed**, so you can play or install them straight from there.
+- Each game's details show whether community download sites list it.
 
-- [Node.js](https://nodejs.org/) (v18+)
-- [Rust](https://www.rust-lang.org/tools/install) (latest stable)
-- [Tauri CLI v2](https://tauri.app/start/prerequisites/)
+### 🕹️ Play from the couch
+Press **Start** on your controller and the app switches to a big-screen **controller mode**. Browse with the stick and press **A** to play.
 
-### Installation
+### 🎨 Make it yours
+- Pick your own **cover art**, or let the app find it for you
+- Mark **favorites**, and hide games you don't want to see (you can always bring them back)
+- Sort games into **Backlog / Playing / Finished**
+- **Grid or list** view, search, and a **Recently played** list
+- Right-click any game to play it, install it, open its store page or folder, change its cover, favorite it or hide it
 
-```bash
-git clone https://github.com/giksaw/ConsoleAlpha.git
-cd ConsoleAlpha
-npm install
-```
+### 🔒 Private by design
+No account and no ads, and nothing about you is collected. Your library stays on your PC. Read the [privacy policy](https://giksaw.github.io/ConsoleAlpha/privacy-policy.html).
 
-### Development
+---
 
-```bash
-npm run tauri dev
-```
+## 📸 Screenshots
 
-This starts the Vite dev server and launches the Tauri desktop app with hot-reload.
+<table>
+  <tr>
+    <td><img src="docs/screenshots/library.webp" alt="Your game library"><br><sub><b>Your library</b>: every launcher in one place</sub></td>
+    <td><img src="docs/screenshots/controller.webp" alt="Controller mode"><br><sub><b>Controller mode</b>: made for the couch</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/filters.webp" alt="Trending filters"><br><sub><b>Filters</b>: find your next game</sub></td>
+    <td><img src="docs/screenshots/details.webp" alt="Game details"><br><sub><b>Game details</b>: price, reviews, players, tags</sub></td>
+  </tr>
+</table>
 
-### Building
+---
 
-```bash
-npm run tauri build
-```
+## 🚀 Get it in a minute
 
-This builds the installer (NSIS) at `src-tauri/target/release/bundle/nsis/Game Console Alpha_<version>_x64-setup.exe`. This is the file published on GitHub Releases, renamed to `GameConsoleAlpha-<version>-x64-setup.exe`.
+1. **Download** `GameConsoleAlpha-<version>-x64-setup.exe` from the [latest release](https://github.com/giksaw/ConsoleAlpha/releases/latest).
+2. **Run it.** It installs just for you, so you don't need administrator rights.
+3. If Windows says *"Windows protected your PC"*, click **More info → Run anyway**. This happens because the app is new and not yet "signed", which is a paid certificate.
 
-### Microsoft Store package (MSIX)
+Already have an older version? Just run the new installer. Your games and settings are kept.
 
-```bash
-npm run package:msix              # build the app, then package it
-npm run package:msix -- --no-build  # package the exe that's already built
-```
+**Requirements:** 64-bit Windows 10 (version 2004 or later) or Windows 11.
 
-Needs the free [Windows SDK](https://developer.microsoft.com/windows/downloads/windows-sdk/) (for `makeappx.exe`). The package lands in `src-tauri/target/msix/` and is left unsigned: the Store signs it on submission.
+---
 
-- **Identity**: before uploading, copy the values from Partner Center → *Product identity* into `msix/identity.json`.
-- **Test locally** (Settings → System → For developers → Developer Mode on):
-  `Add-AppxPackage -Register src-tauri\target\msix\stage\AppxManifest.xml`. Remove it with
-  `Get-AppxPackage *GameCabinet* | Remove-AppxPackage`.
-- The manifest asks for two restricted capabilities you justify at submission: `runFullTrust` (it launches other programs) and `unvirtualizedResources` (games started from it must save to the real AppData/registry, not inside the launcher's package).
+## ❓ Questions
 
-### Frontend-only (Browser Mode)
+<details>
+<summary><b>Is it free?</b></summary>
 
-You can also run the frontend without the Tauri backend:
+Yes, completely. There's nothing to buy and no ads. It's open source under the MIT license.
+</details>
 
-```bash
-npm run dev
-```
+<details>
+<summary><b>Does it download or sell games?</b></summary>
 
-Open http://localhost:1420 in your browser. Note that game scanning and launching require the Tauri backend.
+No. When you click **Install**, the app asks Steam or Epic Games to install the game, and the download runs in that launcher as usual. Games start the same way they normally would, through Steam, Epic and so on, so your saves, achievements and friends lists all keep working.
+</details>
 
-## Store Detection
+<details>
+<summary><b>Do I need to log in or give it my passwords?</b></summary>
 
-Game Console Alpha reads installed games from:
+No. It reads what your launchers have already saved on your PC. It never asks for an account.
+</details>
 
-| Store           | Source                                                              | Launched via                       |
-| --------------- | ------------------------------------------------------------------- | ---------------------------------- |
-| Steam           | Registry `SteamPath` → `libraryfolders.vdf` → `appmanifest_*.acf`   | `steam://rungameid/<id>`           |
-| Epic Games      | `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests\*.item`        | `com.epicgames.launcher://` link   |
-| GOG Galaxy      | Registry `HKLM\SOFTWARE\WOW6432Node\GOG.com\Games`                  | The game's executable              |
-| Battle.net      | Uninstall entries run by `Blizzard Uninstaller.exe --uid=…`         | The game's `… Launcher.exe`        |
-| Ubisoft Connect | Registry `…\Ubisoft\Launcher\Installs\<id>`                         | `uplay://launch/<id>/0`            |
-| EA App / Origin | Uninstall entries run by EA's `EAInstaller` + `__Installer\installerdata.xml` | The game's executable (starts the EA app) |
-| Xbox            | `<drive>:\XboxGames\*\Content\MicrosoftGame.config`                 | `shell:AppsFolder\<family>!<app>`  |
-| Amazon Games    | Uninstall entries run by `Amazon Game Remover.exe -p <id>`          | `amazon-games://play/<id>`         |
-| itch.io         | `%APPDATA%\itch\apps\*\.itch\receipt.json.gz`                       | The game's executable              |
-| Rockstar Games  | Uninstall entries run by `Rockstar Games\Launcher\uninstall.exe`    | The game's executable              |
+<details>
+<summary><b>How do I update it?</b></summary>
 
-When two stores report the same install folder (e.g. an EA game bought on
-Steam), it is listed once, under the store scanned first.
+For now, download the newest installer from [Releases](https://github.com/giksaw/ConsoleAlpha/releases) and run it. Automatic updates are [on the way](#-coming-next).
+</details>
 
-## Cover art
+<details>
+<summary><b>Is there a Microsoft Store version?</b></summary>
 
-Covers come from your own picks first, then a by-name Steam lookup, then the
-store's own art. For games that aren't on Steam, add a free
-[SteamGridDB](https://www.steamgriddb.com/profile/preferences/api) API key in
-**Sources & settings → Artwork**; it is stored locally and only sent to SteamGridDB.
+It's coming soon, and it will update itself. Install either the Store version or this one, not both, because they share the same library and settings.
+</details>
 
-## Where data is stored
+---
 
-| Data                                   | Location                                  |
-| -------------------------------------- | ----------------------------------------- |
-| Library cache, favorites, store toggles, game folders | `%APPDATA%\com.giksaw.gameconsolealpha\*.json` |
-| Custom games, settings (incl. SteamGridDB key), statuses, hidden games, last launches, cover lookups, install sizes | WebView `localStorage` (`cabinet_*` keys) |
-| Custom cover images                    | WebView IndexedDB (`cabinet` → `covers`)  |
+## 🛣️ Coming next
 
-## License
+| | Feature | What it means for you |
+|---|---|---|
+| 🖥️ | **Can it run on my PC?** | Before you buy or install a game, see whether your PC meets its minimum and recommended requirements: processor, graphics card, memory and disk space, checked against your own hardware. |
+| 🔄 | **Automatic updates** | The app tells you when a new version is out and updates itself, so you never have to check for a new download. |
+| 🏪 | **Microsoft Store** | Install it straight from the Microsoft Store. |
 
-MIT — see [LICENSE](LICENSE). Privacy policy: [docs/privacy-policy.html](docs/privacy-policy.html), published at https://giksaw.github.io/ConsoleAlpha/privacy-policy.html.
+Want something that isn't on this list? 👇
+
+---
+
+## 💬 Ask for a feature or report a problem
+
+Your ideas shape what gets built next. All you need is a free GitHub account:
+
+- 💡 **Have an idea?** [Request a feature](https://github.com/giksaw/ConsoleAlpha/issues/new?template=feature_request.yml). Describe what you'd like and why. You don't need to know anything technical.
+- 🐞 **Something not working?** [Report a problem](https://github.com/giksaw/ConsoleAlpha/issues/new). Say what you did, what happened, and which version you're on.
+- 👍 **Like someone else's idea?** Browse the [open requests](https://github.com/giksaw/ConsoleAlpha/issues) and give it a thumbs-up. Popular requests get looked at first.
+
+---
+
+## 🛠️ For developers
+
+Curious how it works, or want to build it yourself? **[TECHNICAL.md](TECHNICAL.md)** covers:
+
+- the tech stack (Rust + Tauri 2, plain JavaScript)
+- how each launcher's games are detected and started
+- where the Trending data comes from
+- where your data is stored
+- the project structure
+- building the installer and the Microsoft Store package
+
+---
+
+<div align="center">
+<sub>MIT licensed · <a href="https://giksaw.github.io/ConsoleAlpha/privacy-policy.html">Privacy policy</a> · Made by Giksaw Interactive</sub>
+</div>
