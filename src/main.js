@@ -1407,14 +1407,17 @@ function trendApiFilters(tab) {
     return s !== "" && Number.isFinite(n) ? n : null;
   };
   const int = (v) => { const n = num(v); return n === null ? null : Math.round(n); };
+  // Unreleased games have no reviews or price and haven't come out yet, so
+  // these filters would hide the whole Upcoming tab.
+  const upcoming = tab === "upcoming";
   return {
     tags: f.tags, exclude_tags: f.exclude_tags, categories: f.categories,
     os: f.os || null, deck: f.deck, vr: f.vr, language: f.language || null,
-    price: f.price || null, max_price: num(f.max_price), on_sale: f.on_sale,
+    price: f.price || null, max_price: upcoming ? null : num(f.max_price), on_sale: f.on_sale,
     hide_early_access: f.hide_early_access,
-    min_review_pct: int(f.min_review_pct), min_review_count: int(f.min_review_count),
-    // Nothing upcoming has been released yet.
-    released_within_days: tab === "upcoming" ? null : int(f.released_within_days),
+    min_review_pct: upcoming ? null : int(f.min_review_pct),
+    min_review_count: upcoming ? null : int(f.min_review_count),
+    released_within_days: upcoming ? null : int(f.released_within_days),
     year_min: int(f.year_min), year_max: int(f.year_max),
     sort: TREND_SORTS[tab] ? trendSort[tab] : null,
   };
@@ -1601,14 +1604,18 @@ function trendChip(kind, value, label, on, title = "") {
   return `<button class="chip ${on ? "on" : ""}" data-tfc="${kind}:${esc(String(value))}" aria-pressed="${on}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`;
 }
 
+const TREND_UPCOMING_OFF = "Not used on Upcoming: unreleased games have no reviews or price yet";
+
 function trendSelect(id, options, value, label, disabled = false) {
-  return `<select class="sel" id="${id}" aria-label="${esc(label)}"${disabled ? " disabled" : ""}>${options
+  const off = disabled ? ` disabled title="${esc(TREND_UPCOMING_OFF)}"` : "";
+  return `<select class="sel" id="${id}" aria-label="${esc(label)}"${off}>${options
     .map(([v, l]) => `<option value="${esc(v)}"${String(value) === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
 }
 
 function trendPanelHtml() {
   const f = trendFilters;
   const tab = trendTab();
+  const up = tab === "upcoming";
   const tagRow = [];
   const shown = new Set();
   if (trendOptions) {
@@ -1636,11 +1643,11 @@ function trendPanelHtml() {
     ${row("Players", TREND_PLAYERS.map(([id, l]) => trendChip("cat", id, l, f.categories.includes(id))).join(""))}
     ${row("Features", TREND_FEATURES.map(([id, l]) => trendChip("cat", id, l, f.categories.includes(id))).join(""))}
     ${row("Price", `<div class="seg">${priceSeg}</div>
-      <input class="fin" id="tmaxp" inputmode="decimal" placeholder="Max price" value="${esc(f.max_price)}" aria-label="Highest price, in your Steam store's currency" title="Highest price, in your Steam store's currency">
+      <input class="fin" id="tmaxp" inputmode="decimal" placeholder="Max price" value="${esc(f.max_price)}" aria-label="Highest price, in your Steam store's currency" title="${up ? esc(TREND_UPCOMING_OFF) : "Highest price, in your Steam store's currency"}"${up ? " disabled" : ""}>
       ${trendChip("flag", "on_sale", "On sale", f.on_sale)}`)}
-    ${row("Reviews", `${trendSelect("trpct", TREND_REVIEW_PCT, f.min_review_pct, "Lowest share of positive reviews")}
-      ${trendSelect("trcnt", TREND_REVIEW_COUNT, f.min_review_count, "Fewest reviews")}`)}
-    ${row("Release", `${trendSelect("twithin", TREND_WITHIN, tab === "upcoming" ? "" : f.released_within_days, "Released within", tab === "upcoming")}
+    ${row("Reviews", `${trendSelect("trpct", TREND_REVIEW_PCT, up ? "" : f.min_review_pct, "Lowest share of positive reviews", up)}
+      ${trendSelect("trcnt", TREND_REVIEW_COUNT, up ? "" : f.min_review_count, "Fewest reviews", up)}`)}
+    ${row("Release", `${trendSelect("twithin", TREND_WITHIN, up ? "" : f.released_within_days, "Released within", up)}
       <input class="fin" id="tymin" inputmode="numeric" placeholder="From year" value="${esc(f.year_min)}" aria-label="Released in or after year">
       <input class="fin" id="tymax" inputmode="numeric" placeholder="To year" value="${esc(f.year_max)}" aria-label="Released in or before year">
       ${trendChip("flag", "hide_early_access", "Hide Early Access", f.hide_early_access)}`)}
@@ -1853,7 +1860,9 @@ function renderTrendResults() {
       body = `<div class="empty">${what}${filtered
         ? `<br><button class="btn o" data-tfclear style="margin-top:14px">Clear all filters</button>` : ""}</div>`;
     } else {
-      body = `<div class="grid">${games.map(renderTrendCard).join("")}</div><div class="tmore" id="tmore"></div>`;
+      // Tight filters can leave the pages read so far empty while more remain.
+      const none = games.length ? "" : `<div class="empty">Nothing matched in the results checked so far.</div>`;
+      body = `${none}<div class="grid">${games.map(renderTrendCard).join("")}</div><div class="tmore" id="tmore"></div>`;
     }
   }
   box.innerHTML = body;
@@ -1867,7 +1876,11 @@ function appendTrendCards(games) {
   const grid = $("#tres .grid:not([aria-busy])");
   if (!grid) { renderTrendResults(); return; }
   const shown = trendVisible(games);
-  if (shown.length) grid.insertAdjacentHTML("beforeend", shown.map(renderTrendCard).join(""));
+  if (shown.length) {
+    grid.insertAdjacentHTML("beforeend", shown.map(renderTrendCard).join(""));
+    const none = $("#tres > .empty");
+    if (none) none.remove();
+  }
   updateTrendHead();
   const entry = trendData.get(trendKey());
   if (entry && entry.next == null && !grid.querySelector(".g")) { renderTrendResults(); return; }
